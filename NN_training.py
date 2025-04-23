@@ -10,12 +10,13 @@ import argparse
 def parse_args():
     parser = argparse.ArgumentParser(description="Experimenter: compares models with different initialization")
     #data, paths, and other settings of general setup
-    parser.add_argument('--datapath', type=str, default= 'data/images_pileaute', help='Path to load the dataset')
+    parser.add_argument('--imagedatapath', type=str, default= 'data/images_pileaute', help='Path to load the image dataset')
+    parser.add_argument('--labelpath', type=str, default= 'data/SVI_interpolated.csv', help='Path to load the labels')
     parser.add_argument('--output_path', type=str, default= 'output', help='Path for saving models and metrics')    
-    parser.add_argument('--gpu', type=str, default='3', help='GPU ID to use for training (see nvidia-smi)')
+    parser.add_argument('--gpu', type=str, default='1', help='GPU ID to use for training (see nvidia-smi)')
     parser.add_argument('--multigpu',  action='store_true', default=False, help='Either to use parallel GPU processing or not')
   
-    parser.add_argument('--tl',  action='store_true', default=False, help='Transfer learning or not')
+    parser.add_argument('--tl',  action='store_true', default=True, help='Transfer learning or not')
     parser.add_argument('--backbone', type=str, default='convnext_nano', help='Pretrained model name according to timm')
     parser.add_argument('--seed', type=int, default=666, help='Base random seed for weight initialization and data splits/shuffle')
     parser.add_argument('--lr', type=float, default=5e-5, help='learning rate')   
@@ -46,7 +47,7 @@ import timm
 import sklearn.model_selection
 from sklearn.metrics import mean_squared_error
 ##################################################################
-import dataset
+from src import dataset
 
 
 if __name__ == "__main__":
@@ -56,16 +57,18 @@ if __name__ == "__main__":
     total_cores=multiprocessing.cpu_count()
     # num_workers = int(total_cores/2)-2
     
-    # print("System has", gpus, "GPUs and", total_cores, "CPU cores. Using", num_workers, "cores for data loaders.")
+    print("System has", gpus, "GPUs and", total_cores, "CPU cores. Using", num_workers, "cores for data loaders.")
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(device)
 
     BATCH_SIZE = 32 
-    # imgdimm = (256,192)
     # ImageNet normalization parameters and other img transformations
     averages =  (0.485, 0.456, 0.406)
     variances = (0.229, 0.224, 0.225)  
-    # REGULARIZATION/DATA AUG.
+    
     imgdimm = (384, 512)
+
+    # REGULARIZATION/DATA AUG.
         
     train_transform = transforms.Compose([
         transforms.ToTensor(),        
@@ -94,18 +97,14 @@ if __name__ == "__main__":
         transforms.Normalize(averages, variances),        
     ])
    
-    train_dataset = dataset.Microbiological_Images(root=args.datapath, transform=train_transform, label=args.target) 
-    test_dataset = dataset.Microbiological_Images(root=args.datapath, transform=val_transform, label=args.target)   
+    train_dataset = dataset.MicroscopicImages(root=args.imagedatapath, magnification=10, label_path=args.labelpath, image_type='train', transform=train_transform) 
+    val_dataset = dataset.MicroscopicImages(root=args.imagedatapath, magnification=10, label_path=args.labelpath, image_type='train', transform=val_transform)   
     
-    # if args.target == 'bulking':
-    #     train_dataset.targets=torch.nn.functional.one_hot(torch.FloatTensor(train_dataset.targets).to(torch.int64))
-    #     test_dataset.targets=torch.nn.functional.one_hot(torch.FloatTensor(test_dataset.targets).to(torch.int64))
-        
     idx = np.arange(len(train_dataset))
     
     kfold = sklearn.model_selection.KFold(n_splits=args.K, shuffle=True, random_state = args.seed)
     kfold.get_n_splits(idx)
-    for fold, (train_index, test_index) in enumerate(kfold.split(idx)):
+    for fold, (train_index, val_index) in enumerate(kfold.split(idx)):
         torch.manual_seed(args.seed*(fold+1))
         np.random.seed(args.seed*(fold+1))
         
@@ -128,14 +127,11 @@ if __name__ == "__main__":
         loss_convergences = []
         total_trainacc = []
         total_validacc = []
-        total_validloss = []
-        total_testacc  = []        
+        total_validloss = []    
         all_trains_accs = []
         all_trains_loss = []    
         all_valid_accs = []
         all_valid_losses = []    
-        all_test_accs = []
-        all_test_losses = [] 
         all_gradients = []    
         train_accs, train_losses, val_accs, val_losses = [], [], [], []
         gradients = []
@@ -147,23 +143,21 @@ if __name__ == "__main__":
         else: 
                   
             train = torch.utils.data.Subset(train_dataset, train_index)
-            test = torch.utils.data.Subset(test_dataset, test_index)
+            val = torch.utils.data.Subset(val_dataset, val_index)
          
-            if args.target == 'bulking':
-                TARGET_SCALE=1
-            else:
-                TARGET_SCALE = max([train_dataset.targets[indd] 
+            TARGET_SCALE = max([train_dataset.targets[indd] 
                                     for indd in train_index])
+            
             # target_weights = inbalance_weights([train_dataset.targets[indd] 
             #                                     for indd in train_index])
             
             trainloader = torch.utils.data.DataLoader(train, batch_size = BATCH_SIZE, shuffle = True,
                                                       drop_last=False, pin_memory=True, num_workers=num_workers)
             
-            testloader = torch.utils.data.DataLoader(test, batch_size = 1, shuffle = False,
+            valloader = torch.utils.data.DataLoader(val, batch_size = 1, shuffle = False,
                                                      drop_last=False, num_workers=num_workers)
 
-            print(args.backbone, ' - train/test ratio:', len(train), len(test), 'transfer learning?', args.tl)
+            print(args.backbone, ' - train/val ratio:', len(train), len(val), 'transfer learning?', args.tl)
             print('learning rate:', args.lr, ', target scale:', TARGET_SCALE)
             
             if args.target == 'bulking':
@@ -325,7 +319,7 @@ if __name__ == "__main__":
                 vlo_bff = []
                 with torch.no_grad():
                     model.eval()
-                    for ii, data in enumerate(testloader, 0):
+                    for ii, data in enumerate(valloader, 0):
                         if args.target == 'bulking':
                             inputs, labels = data[0].to(device), data[1].to(torch.int64).to(device)
                         else:
@@ -365,9 +359,8 @@ if __name__ == "__main__":
             del model
             model = []            
             predictions = []
-            dates = [test_dataset.dates[i] for i in test_index]
             best_model.eval()
-            for ii, data in enumerate(testloader, 0):
+            for ii, data in enumerate(valloader, 0):
                 if args.target == 'bulking':
                     inputs, labels = data[0].to(device), data[1].to(torch.int64).to(device)
                     
@@ -383,7 +376,7 @@ if __name__ == "__main__":
                 
             with open(file, 'wb') as f:
                 pickle.dump([train_accs, train_losses, val_accs, val_losses, 
-                              converged_on, predictions, dates], f)
+                              converged_on, predictions], f)
                 
             torch.save(best_model.state_dict(), file + '_NETWORK.pt')
 
@@ -408,9 +401,7 @@ if __name__ == "__main__":
                 f"train loss: {round(train_losses[converged_on], 4):.4f}, "
                   # f"train acc: {round(train_accs[converged_on] * 100, 2):.2f}%", 
                        f"val loss: {round(val_losses[converged_on], 3):.3f}, "
-                      # f"val acc: {round(val_accs[converged_on] * 100, 2):.2f}%",   
-                      # f"test loss: {round(tl, 3):.3f}, "
-                      # f"test acc: {round(tac * 100, 2):.2f}%"
+                      # f"val acc: {round(val_accs[converged_on] * 100, 2):.2f}%",
                       " || ", net_time, 'sec')        
 
             

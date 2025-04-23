@@ -1,67 +1,81 @@
+from utils.helpers import extract_image_paths
 from torch.utils.data import Dataset
-from pathlib import Path
 import pandas as pd
-from os import listdir
 from PIL import Image as PImage
-import numpy as np
-
-def extract_images_and_labels(base_folder):
-    """
-    Extract images and labels from the specified folder.
-
-    Parameters:
-        base_folder (str): The base folder containing subfolders with images.
-
-    Returns:
-        all_images (list): A list of all extracted images.
-        image_labels (numpy array): A numpy array of the corresponding labels.
-    """
-    # Initialize lists for images and labels
-    all_images = []
-    image_labels = []
-    image_folders = listdir(base_folder) 
-
-    # Save all images 
-    for folder in image_folders:
-        path = f"{base_folder}/{folder}"
-        images_list = listdir(path)
-        for image in images_list:
-            img = PImage.open(f"{path}/{image}")  # open in RGB color space
-            all_images.append(img)
-            image_labels.append(0) #I just put all SVI labels at 0 since I don't have SVI predictions
-
-    # Convert image labels to numpy array
-    image_labels = np.array(image_labels)
-
-    return all_images, image_labels
-
+import os
 
 class MicroscopicImages(Dataset):
-    def __init__(self, root, transform=None, label='SVI'):
+    def __init__(self, root, magnification, label_path, image_type, transform=None):
         """
         Args:
-            root (str): Path to the rooth directory containing images
+            root (str): Path to the root directory containing images.
+            magnification (str or int): Magnification filter used in image path extraction.
+            label_path (str): Path to CSV file containing image labels with dates as index.
+            image_type (str): type of dataset that needs to be extracted: 'all', 'old', or 'new', train or test
             transform (callable, optional): Optional transform to be applied on a sample.
-            label (str or list): Target labels for the dataset, default is 'SVI'
         """
         self.root = root
         self.transform = transform
-        self.target = label
-        # Use the extract_images_and_labels function to load images and labels
-        self.images, self.targets = extract_images_and_labels(root) 
+        self.label_path = label_path
+        self.image_paths = extract_image_paths(root, magnification=magnification, image_type=image_type)
+        self.targets = []
+        # Load CSV file containing image paths (or filenames) and labels
+        self.labels_df = pd.read_csv(label_path, index_col=0)
+        
+        for image_path in self.image_paths:
+            # Extract date
+            parts = image_path.split(os.sep)
+            date = next((p for p in parts if p[:4].isdigit() and p[4] == '-'), None)
+            
+            if date is None:
+                print(f"Could not extract date from path: {image_path}")
+                self.targets.append(None)
+                continue
+
+            if date not in self.labels_df.index:
+                print(f"Date {date} not in label CSV")
+                self.targets.append(None)
+                continue
+
+            label = self.labels_df.loc[date].values[0]  # adjust column if needed
+            self.targets.append(label)
 
     def __len__(self):
-        return len(self.images)
+        return len(self.image_paths)
 
     def __getitem__(self, idx):
-        image = self.images[idx]
+        image_path = self.image_paths[idx]
+        
+        try:
+            image = PImage.open(image_path).convert("RGB")
+        except Exception as e:
+            print(f"Failed to load image at index {idx} (path: {image_path}): {e}")
+            return None
+
         if self.transform:
-          try:
-            image = self.transform(image)
-          except Exception as e:
-            print(f"Transform failed for image at index {idx}: {e}")
-            return None, None
+            try:
+                image = self.transform(image)
+            except Exception as e:
+                print(f"Transform failed for image at index {idx}: {e}")
+                return None
 
-        target = self.targets[idx].astype(np.float32)
+        # Get the date from the folder structure: 
+        parts = image_path.split(os.sep)
+        date = None
+        for part in parts:
+            if part[:4].isdigit() and part[4] == '-':  # e.g. '2023-11-02'
+                date = part
+                break
 
-        return image, target
+        if date is None:
+            print(f"Could not find date folder in path: {image_path}")
+            return None
+
+        if date not in self.labels_df.index:
+            print(f"Date {date} not found in label CSV")
+            return None
+
+        label = self.labels_df.loc[date].values[0]  # Adjust if multiple columns
+
+
+        return image, label
