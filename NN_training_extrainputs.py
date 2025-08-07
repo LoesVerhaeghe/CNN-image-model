@@ -11,8 +11,9 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Experimenter: compares models with different initialization")
     #data, paths, and other settings of general setup
     parser.add_argument('--imagedatapath', type=str, default= 'data/plant_zurich/Mikroskopie_structured', help='Path to load the image dataset')
+    parser.add_argument('--extrainputpath', type=str, default= 'data/plant_zurich/SST_TSS_extrainputs_standardized.csv', help='Path to load the labels')
     parser.add_argument('--labelpath', type=str, default= 'data/plant_zurich/SST_TSS.csv', help='Path to load the labels')
-    parser.add_argument('--output_path', type=str, default= 'output/zurich/SST_TSS_newhead', help='Path for saving models and metrics')    
+    parser.add_argument('--output_path', type=str, default= 'output/zurich/SST_TSS_extrainputs_standardized', help='Path for saving models and metrics')    
     parser.add_argument('--gpu', type=str, default='1', help='GPU ID to use for training (see nvidia-smi)')
     parser.add_argument('--multigpu',  action='store_true', default=False, help='Either to use parallel GPU processing or not')
   
@@ -38,21 +39,34 @@ import time
 # os.environ["CUBLAS_WORKSPACE_CONFIG"]=":4096:8"
 args = parse_args()
 os.environ["CUDA_VISIBLE_DEVICES"]=args.gpu
-os.environ["OMP_NUM_THREADS"]=str(1)
+os.environ["OMP_NUM_THREADS"]=str(num_workers)
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from torchvision import transforms
-from torchsummary import summary
 import timm
 import sklearn.model_selection
+from sklearn.metrics import mean_squared_error
 ##################################################################
-from src import dataset_zurich
-    
+from src import dataset_extrainputs
+
+
+### define the model that will be used: pretrained model + new head that can take extra inputs. 
+class CombinedModel(nn.Module):
+    def __init__(self, backbone_model, new_head):
+        super(CombinedModel, self).__init__()
+        self.backbone = backbone_model
+        self.head = new_head
+
+    def forward(self, image, lab_data):
+        img_features = self.backbone(image)
+        combined = torch.cat([img_features, lab_data], dim=1)
+        out = self.head(combined)
+        return out
+
 if __name__ == "__main__":
     args = parse_args()
     torch.set_num_threads(8)
-    # num_workers = int(total_cores/2)-2
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(device)
 
@@ -61,7 +75,7 @@ if __name__ == "__main__":
     averages =  (0.485, 0.456, 0.406)
     variances = (0.229, 0.224, 0.225)  
     
-    imgdimm = (512,384)
+    imgdimm = (384, 512)
 
     # REGULARIZATION/DATA AUG.
         
@@ -69,14 +83,6 @@ if __name__ == "__main__":
         transforms.ToTensor(),        
         transforms.Resize(imgdimm),
         # transforms.RandomResizedCrop(imgdimm, scale=(0.8, 1.2), ratio=(1.0, 1.0)),
-        
-        # Additional transformations
-        transforms.RandomApply(
-            torch.nn.ModuleList([transforms.ColorJitter(
-                brightness=0.2, contrast=0, saturation=0, hue=0),
-                ]), p=0.5),        
-        ######
-        #ToCanny(),
         ###### geometric transformations
         transforms.RandomHorizontalFlip(p=0.5),
         transforms.RandomVerticalFlip(p=0.5),
@@ -84,21 +90,26 @@ if __name__ == "__main__":
             torch.nn.ModuleList([transforms.RandomRotation(180),
                 ]), p=0.5),        
         transforms.RandomErasing(p=0.5, scale=(0.02, 0.2)),
+        ######
+        # Additional transformations
+        transforms.RandomApply(
+            torch.nn.ModuleList([transforms.ColorJitter(
+                brightness=0.2, contrast=0, saturation=0, hue=0),
+                ]), p=0.5),        
+        ######
         transforms.Normalize(averages, variances),   
     ])
     
     val_transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Resize(imgdimm),
-        #ToCanny(),
         transforms.Normalize(averages, variances),        
     ])
    
-    train_dataset = dataset_zurich.MicroscopicImagesZurich(root=args.imagedatapath, start_folder='2013-01-08', end_folder='2020-08-10', label_path=args.labelpath, transform=train_transform) 
+    train_dataset = dataset_extrainputs.MicroscopicImagesZurich(root=args.imagedatapath, start_folder='2013-01-08', end_folder='2020-08-10', label_path=args.labelpath, extrainput_path=args.extrainputpath, transform=train_transform) 
     #train_dataset_2 = dataset.MicroscopicImages(root=args.imagedatapath, magnification=10, start_folder='2024-10-09', end_folder='2025-02-19', label_path=args.labelpath, transform=train_transform) 
  
-    val_dataset = dataset_zurich.MicroscopicImagesZurich(root=args.imagedatapath, start_folder='2013-01-08', end_folder='2020-08-10', label_path=args.labelpath, transform=val_transform)   
-    #val_dataset_2 = dataset.MicroscopicImages(root=args.imagedatapath, magnification=10, start_folder='2024-10-09', end_folder='2025-02-19', label_path=args.labelpath, transform=val_transform)   
+    val_dataset = dataset_extrainputs.MicroscopicImagesZurich(root=args.imagedatapath, start_folder='2013-01-08', end_folder='2020-08-10', label_path=args.labelpath,extrainput_path=args.extrainputpath, transform=val_transform)       # val_dataset_2 = dataset_extrainputs.MicroscopicImages(root=args.imagedatapath, magnification=10, start_folder='2024-10-09', end_folder='2025-02-19', label_path=args.labelpath,extrainput_path=args.extrainputpath, transform=val_transform)   
     
     #train_dataset.image_paths.extend(train_dataset_2.image_paths)
     #train_dataset.targets.extend(train_dataset_2.targets)
@@ -106,7 +117,7 @@ if __name__ == "__main__":
     #val_dataset.targets.extend(val_dataset_2.targets)
     idx = np.arange(len(train_dataset))
     
-    kfold = sklearn.model_selection.KFold(n_splits=args.K, shuffle=False) #!!!!!!!!!!!!!!!!!!!!
+    kfold = sklearn.model_selection.KFold(n_splits=args.K, shuffle=False)
     kfold.get_n_splits(idx)
     for fold, (train_index, val_index) in enumerate(kfold.split(idx)):
         torch.manual_seed(args.seed*(fold+1))
@@ -140,6 +151,7 @@ if __name__ == "__main__":
         train_accs, train_losses, val_accs, val_losses = [], [], [], []
         gradients = []
         net_time = time.time()
+        print(file)
         if exists:
             with open(file, 'rb') as f:
                train_accs, train_losses, val_accs, val_losses, converged_on, predictions, dates = pickle.load(f)    
@@ -186,8 +198,8 @@ if __name__ == "__main__":
                                               drop_path_rate=drop_path_rate)
                 elif 'convnext' in args.backbone:
                     model = timm.create_model(args.backbone, pretrained=True, 
-                                              num_classes=0, head_init_scale=0.001,
-                                              drop_path_rate=drop_path_rate)
+                                              num_classes=0, head_init_scale=0.001, #NO CLASSIFICATION HEAD!!!!!!
+                                              drop_path_rate=drop_path_rate) #This code loads the full backbone pretrained weights. By default, none of its parameters are frozen.
                 else:
                     model = timm.create_model(args.backbone, pretrained=True, 
                                               num_classes=n_classes)
@@ -239,7 +251,7 @@ if __name__ == "__main__":
             else:
                 print("!!! Layer-wise learning rates not available for the given network")
                 layer_wise_lr=model.parameters()
-
+            
             optimizer = torch.optim.AdamW(layer_wise_lr,                                          
                                           lr=args.lr,  weight_decay=weight_decay) #standard lr=0.001
             
@@ -255,13 +267,28 @@ if __name__ == "__main__":
             
             best_model=copy.deepcopy(model)    
             model.to(device)
-
+            from torchsummary import summary
             summary(model, input_size=(3, 384, 512))
-            
+
+            #################### define new model with extra input and thus new head
+            num_image_features=model.num_features
+            print('model num features for images= ', num_image_features)
+            num_lab_features=6
+            combined_features_size = num_image_features + num_lab_features
+            print(f"Combined feature size (image + lab): {combined_features_size}")
+
+            new_head = nn.Sequential(
+                nn.Linear(combined_features_size, 64),  
+                nn.ReLU(),
+                nn.Linear(64, 1)  
+                )
+            new_head.to(device)
+
+            model = CombinedModel(backbone_model=model, new_head=new_head)
+
             for epoch in range(args.epochs):
                 torch.manual_seed(args.seed*(fold+1) + epoch)
                 np.random.seed(args.seed*(fold+1) + epoch)
-            # for epoch in range(args.epochs):  # loop over the dataset multiple times
                 start_time = time.time()
                 
                 # if epoch == args.epochs//5:
@@ -284,9 +311,9 @@ if __name__ == "__main__":
                     # get the inputs; data is a list of [inputs, labels]
                     # if args.large_scale:#in the large scale case, have to put batch on GPU
                     if args.target == 'bulking':
-                        inputs, labels = data[0].to(device), data[1].to(torch.int64).to(device)
+                        inputs, labels, extrainputs = data[0].to(device), data[1].to(torch.int64).to(device), data[2].to(torch.float32).to(device)
                     else:
-                        inputs, labels = data[0].to(device), data[1].to(torch.float32).to(device)
+                        inputs, labels, extrainputs = data[0].to(device), data[1].to(torch.float32).to(device), data[2].to(torch.float32).to(device)
                         labels = labels.unsqueeze(1)/TARGET_SCALE
                     # else: #in the small scale case, the batches are already preloaded on GPU
                     # inputs, labels = data[0], data[1]
@@ -294,7 +321,7 @@ if __name__ == "__main__":
                     # zero the parameter gradients
                     optimizer.zero_grad()  
                     with torch.cuda.amp.autocast():
-                        output = model(inputs) 
+                        output = model(inputs, extrainputs) 
                         # print(output.size(), labels.size())
                         loss = criterion(output, labels)
                         # loss = criterion_weighted(output, labels, weight=weights)
@@ -327,12 +354,12 @@ if __name__ == "__main__":
                     model.eval()
                     for ii, data in enumerate(valloader, 0):
                         if args.target == 'bulking':
-                            inputs, labels = data[0].to(device), data[1].to(torch.int64).to(device)
+                            inputs, labels, extrainputs = data[0].to(device), data[1].to(torch.int64).to(device), data[2].to(torch.float32).to(device)
                         else:
-                            inputs, labels = data[0].to(device), data[1].to(torch.float32).to(device)
+                            inputs, labels, extrainputs = data[0].to(device), data[1].to(torch.float32).to(device), data[2].to(torch.float32).to(device)
                             labels = labels.unsqueeze(1)/TARGET_SCALE
 
-                        outputs = model(inputs)
+                        outputs = model(inputs, extrainputs)
                         loss = criterion(outputs, labels) #no weighting loss during validation
                         vlo_bff.append(loss.item())                        
                     
@@ -363,38 +390,38 @@ if __name__ == "__main__":
                           "||", np.round(train_time, decimals=2), 'sec')
                 
             del model
-            model = []        
-            full_dataset = dataset_zurich.MicroscopicImagesZurich(root=args.imagedatapath, 
-                                                                 start_folder='2013-01-08',
-                                                                 end_folder='2024-11-28',
-                                                                 label_path=args.labelpath, 
-                                                                 transform=val_transform) # Use validation transform for testing
+            model = []   
+
+            full_dataset = dataset_extrainputs.MicroscopicImagesZurich(root=args.imagedatapath, 
+                                                     start_folder='2013-01-08',
+                                                     end_folder='2024-11-28',
+                                                     label_path=args.labelpath, 
+                                                     extrainput_path=args.extrainputpath,
+                                                     transform=val_transform) # Use validation transform for testing
             full_loader = DataLoader(full_dataset,
                              batch_size=64,
                              shuffle=False, # IMPORTANT: Ensure order is preserved
                              num_workers=1,
-                             pin_memory=True)            
+                             pin_memory=True)         
             predictions = []
             all_labels = []
             all_preds = []
             best_model.eval()
             for ii, data in enumerate(full_loader, 0):
                 if args.target == 'bulking':
-                    inputs, labels = data[0].to(device), data[1].to(torch.int64).to(device)
-                    
+                    inputs, labels, extrainputs = data[0].to(device), data[1].to(torch.int64).to(device), data[2].to(torch.float32).to(device)     
                     predictions.append((labels.cpu().detach().numpy()[0],
-                                        best_model(inputs).cpu().detach().numpy()[0,0], best_model(inputs).cpu().detach().numpy()[0,1]))
+                                        best_model(inputs, extrainputs).cpu().detach().numpy()[0,0], best_model(inputs, extrainputs).cpu().detach().numpy()[0,1]))
                     
                 else:
-                    inputs, labels = data[0].to(device), data[1].to(torch.float32).to(device)
+                    inputs, labels, extrainputs = data[0].to(device), data[1].to(torch.float32).to(device), data[2].to(torch.float32).to(device)  
                     labels = labels.unsqueeze(1)
-                    preds = best_model(inputs).cpu().detach().numpy() * TARGET_SCALE
+                    preds = best_model(inputs, extrainputs).cpu().detach().numpy() * TARGET_SCALE
                     all_labels.append(labels.cpu().detach().numpy())
                     all_preds.append(preds)
             
             all_labels = np.concatenate(all_labels)
-            all_preds = np.concatenate(all_preds)
-               
+            all_preds = np.concatenate(all_preds)                
             with open(file, 'wb') as f:
                 pickle.dump([train_accs, train_losses, val_accs, val_losses, 
                               converged_on, all_labels, all_preds], f)
@@ -404,7 +431,7 @@ if __name__ == "__main__":
             
             del best_model
             best_model= []
-                    
+            
         convergences.append(converged_on+1)
         loss_convergences.append(np.argmin(val_losses)+1)
         total_validloss.append(val_losses[np.argmin(val_losses)])
@@ -421,7 +448,5 @@ if __name__ == "__main__":
                        f"val loss: {round(val_losses[converged_on], 3):.3f}, "
                       # f"val acc: {round(val_accs[converged_on] * 100, 2):.2f}%",
                       " || ", net_time, 'sec')        
-    
-    
 
             

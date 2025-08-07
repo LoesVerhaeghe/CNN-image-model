@@ -10,10 +10,10 @@ import argparse
 def parse_args():
     parser = argparse.ArgumentParser(description="Experimenter: compares models with different initialization")
     #data, paths, and other settings of general setup
-    parser.add_argument('--imagedatapath', type=str, default= 'data/plant_zurich/Mikroskopie_structured', help='Path to load the image dataset')
-    parser.add_argument('--labelpath', type=str, default= 'data/plant_zurich/SST_TSS.csv', help='Path to load the labels')
-    parser.add_argument('--output_path', type=str, default= 'output/zurich/SST_TSS_newhead', help='Path for saving models and metrics')    
-    parser.add_argument('--gpu', type=str, default='1', help='GPU ID to use for training (see nvidia-smi)')
+    parser.add_argument('--imagedatapath', type=str, default= 'data/settler_data/filtered_data/images_pileaute_settling_filtered', help='Path to load the image dataset')
+    parser.add_argument('--labelpath', type=str, default= 'data/settler_data/filtered_data/TSS_ras_error.csv', help='Path to load the labels')
+    parser.add_argument('--output_path', type=str, default= 'output/settling/output_edgedetection_TSSras_error_train1', help='Path for saving models and metrics')    
+    parser.add_argument('--gpu', type=str, default='0', help='GPU ID to use for training (see nvidia-smi)')
     parser.add_argument('--multigpu',  action='store_true', default=False, help='Either to use parallel GPU processing or not')
   
     parser.add_argument('--tl',  action='store_true', default=True, help='Transfer learning or not')
@@ -21,8 +21,8 @@ def parse_args():
     parser.add_argument('--seed', type=int, default=666, help='Base random seed for weight initialization and data splits/shuffle')
     parser.add_argument('--lr', type=float, default=5e-5, help='learning rate')   
     parser.add_argument('--epochs', type=int, default=30, help='Number of training epochs.')
-    parser.add_argument('--K', type=int, default=10, help='K-fold splits')
-    parser.add_argument('--target', type=str, default='SST_TSS', help='Target to train on')
+    parser.add_argument('--K', type=int, default=4, help='K-fold splits')
+    parser.add_argument('--target', type=str, default='TSSeff_error', help='Target to train on')
 
     return parser.parse_args()
 
@@ -43,11 +43,40 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from torchvision import transforms
-from torchsummary import summary
 import timm
 import sklearn.model_selection
 ##################################################################
-from src import dataset_zurich
+from src import dataset
+
+
+########## define canny edge detection preprocessing step
+
+import cv2
+import numpy as np
+import torch
+from torchvision.transforms import functional as TF
+
+
+class ToCanny:
+    def __init__(self, low_threshold=50, high_threshold=75):
+        self.low = low_threshold
+        self.high = high_threshold
+
+    def __call__(self, img_tensor):
+        # Convert to NumPy (C x H x W -> H x W)
+        img_np = img_tensor.numpy().transpose(1, 2, 0)
+        img_np = (img_np * 255).astype(np.uint8)
+        if img_np.shape[2] == 3:
+            img_gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+
+        # Apply Canny
+        edges = cv2.Canny(img_gray, self.low, self.high)
+
+        # Convert to tensor and add channel dim
+        edges = edges.astype(np.float32) / 255.0  # Normalize to [0,1]
+        edges = np.stack([edges] * 3, axis=0)
+
+        return torch.tensor(edges, dtype=torch.float)
     
 if __name__ == "__main__":
     args = parse_args()
@@ -61,7 +90,7 @@ if __name__ == "__main__":
     averages =  (0.485, 0.456, 0.406)
     variances = (0.229, 0.224, 0.225)  
     
-    imgdimm = (512,384)
+    imgdimm = (384, 512)
 
     # REGULARIZATION/DATA AUG.
         
@@ -76,7 +105,7 @@ if __name__ == "__main__":
                 brightness=0.2, contrast=0, saturation=0, hue=0),
                 ]), p=0.5),        
         ######
-        #ToCanny(),
+        ToCanny(),
         ###### geometric transformations
         transforms.RandomHorizontalFlip(p=0.5),
         transforms.RandomVerticalFlip(p=0.5),
@@ -90,15 +119,15 @@ if __name__ == "__main__":
     val_transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Resize(imgdimm),
-        #ToCanny(),
+        ToCanny(),
         transforms.Normalize(averages, variances),        
     ])
    
-    train_dataset = dataset_zurich.MicroscopicImagesZurich(root=args.imagedatapath, start_folder='2013-01-08', end_folder='2020-08-10', label_path=args.labelpath, transform=train_transform) 
-    #train_dataset_2 = dataset.MicroscopicImages(root=args.imagedatapath, magnification=10, start_folder='2024-10-09', end_folder='2025-02-19', label_path=args.labelpath, transform=train_transform) 
+    train_dataset = dataset.MicroscopicImages(root=args.imagedatapath, magnification=10, start_folder='2023-10-13', end_folder='2024-07-24', label_path=args.labelpath, transform=train_transform) 
+    #train_dataset_2 = dataset.MicroscopicImages(root=args.imagedatapath, magnification=10, start_folder='2024-04-26', end_folder='2025-02-19', label_path=args.labelpath, transform=train_transform) 
  
-    val_dataset = dataset_zurich.MicroscopicImagesZurich(root=args.imagedatapath, start_folder='2013-01-08', end_folder='2020-08-10', label_path=args.labelpath, transform=val_transform)   
-    #val_dataset_2 = dataset.MicroscopicImages(root=args.imagedatapath, magnification=10, start_folder='2024-10-09', end_folder='2025-02-19', label_path=args.labelpath, transform=val_transform)   
+    val_dataset = dataset.MicroscopicImages(root=args.imagedatapath, magnification=10, start_folder='2023-10-13', end_folder='2024-07-24', label_path=args.labelpath, transform=val_transform)   
+    #val_dataset_2 = dataset.MicroscopicImages(root=args.imagedatapath, magnification=10, start_folder='2024-04-26', end_folder='2025-02-19', label_path=args.labelpath, transform=val_transform)   
     
     #train_dataset.image_paths.extend(train_dataset_2.image_paths)
     #train_dataset.targets.extend(train_dataset_2.targets)
@@ -186,7 +215,7 @@ if __name__ == "__main__":
                                               drop_path_rate=drop_path_rate)
                 elif 'convnext' in args.backbone:
                     model = timm.create_model(args.backbone, pretrained=True, 
-                                              num_classes=0, head_init_scale=0.001,
+                                              num_classes=n_classes, head_init_scale=0.001,
                                               drop_path_rate=drop_path_rate)
                 else:
                     model = timm.create_model(args.backbone, pretrained=True, 
@@ -239,7 +268,7 @@ if __name__ == "__main__":
             else:
                 print("!!! Layer-wise learning rates not available for the given network")
                 layer_wise_lr=model.parameters()
-
+            
             optimizer = torch.optim.AdamW(layer_wise_lr,                                          
                                           lr=args.lr,  weight_decay=weight_decay) #standard lr=0.001
             
@@ -255,8 +284,6 @@ if __name__ == "__main__":
             
             best_model=copy.deepcopy(model)    
             model.to(device)
-
-            summary(model, input_size=(3, 384, 512))
             
             for epoch in range(args.epochs):
                 torch.manual_seed(args.seed*(fold+1) + epoch)
@@ -364,9 +391,10 @@ if __name__ == "__main__":
                 
             del model
             model = []        
-            full_dataset = dataset_zurich.MicroscopicImagesZurich(root=args.imagedatapath, 
-                                                                 start_folder='2013-01-08',
-                                                                 end_folder='2024-11-28',
+            full_dataset = dataset.MicroscopicImages(root=args.imagedatapath, 
+                                                                 magnification=10, 
+                                                                 start_folder='2023-10-13',
+                                                                 end_folder='2025-02-19',
                                                                  label_path=args.labelpath, 
                                                                  transform=val_transform) # Use validation transform for testing
             full_loader = DataLoader(full_dataset,

@@ -94,10 +94,10 @@ if __name__ == "__main__":
         transforms.Normalize(averages, variances),        
     ])
    
-    train_dataset = dataset_zurich.MicroscopicImagesZurich(root=args.imagedatapath, start_folder='2013-01-08', end_folder='2020-08-10', label_path=args.labelpath, transform=train_transform) 
+    train_dataset = dataset_zurich.MicroscopicImagesZurich(root=args.imagedatapath, start_folder='2013-01-08', end_folder='2019-12-11', label_path=args.labelpath, transform=train_transform) 
     #train_dataset_2 = dataset.MicroscopicImages(root=args.imagedatapath, magnification=10, start_folder='2024-10-09', end_folder='2025-02-19', label_path=args.labelpath, transform=train_transform) 
  
-    val_dataset = dataset_zurich.MicroscopicImagesZurich(root=args.imagedatapath, start_folder='2013-01-08', end_folder='2020-08-10', label_path=args.labelpath, transform=val_transform)   
+    val_dataset = dataset_zurich.MicroscopicImagesZurich(root=args.imagedatapath, start_folder='2013-01-08', end_folder='2019-12-11', label_path=args.labelpath, transform=val_transform)   
     #val_dataset_2 = dataset.MicroscopicImages(root=args.imagedatapath, magnification=10, start_folder='2024-10-09', end_folder='2025-02-19', label_path=args.labelpath, transform=val_transform)   
     
     #train_dataset.image_paths.extend(train_dataset_2.image_paths)

@@ -12,8 +12,8 @@ def parse_args():
     #data, paths, and other settings of general setup
     parser.add_argument('--imagedatapath', type=str, default= 'data/plant_zurich/Mikroskopie_structured', help='Path to load the image dataset')
     parser.add_argument('--labelpath', type=str, default= 'data/plant_zurich/SST_TSS.csv', help='Path to load the labels')
-    parser.add_argument('--output_path', type=str, default= 'output/zurich/SST_TSS_newhead', help='Path for saving models and metrics')    
-    parser.add_argument('--gpu', type=str, default='1', help='GPU ID to use for training (see nvidia-smi)')
+    parser.add_argument('--output_path', type=str, default= 'output/zurich/SST_TSS_frozenlayers', help='Path for saving models and metrics')    
+    parser.add_argument('--gpu', type=str, default='2', help='GPU ID to use for training (see nvidia-smi)')
     parser.add_argument('--multigpu',  action='store_true', default=False, help='Either to use parallel GPU processing or not')
   
     parser.add_argument('--tl',  action='store_true', default=True, help='Transfer learning or not')
@@ -48,7 +48,8 @@ import timm
 import sklearn.model_selection
 ##################################################################
 from src import dataset_zurich
-    
+
+
 if __name__ == "__main__":
     args = parse_args()
     torch.set_num_threads(8)
@@ -75,8 +76,6 @@ if __name__ == "__main__":
             torch.nn.ModuleList([transforms.ColorJitter(
                 brightness=0.2, contrast=0, saturation=0, hue=0),
                 ]), p=0.5),        
-        ######
-        #ToCanny(),
         ###### geometric transformations
         transforms.RandomHorizontalFlip(p=0.5),
         transforms.RandomVerticalFlip(p=0.5),
@@ -90,14 +89,13 @@ if __name__ == "__main__":
     val_transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Resize(imgdimm),
-        #ToCanny(),
         transforms.Normalize(averages, variances),        
     ])
    
-    train_dataset = dataset_zurich.MicroscopicImagesZurich(root=args.imagedatapath, start_folder='2013-01-08', end_folder='2020-08-10', label_path=args.labelpath, transform=train_transform) 
+    train_dataset = dataset_zurich.MicroscopicImagesZurich(root=args.imagedatapath, start_folder='2013-01-08', end_folder='2022-12-14', label_path=args.labelpath, transform=train_transform) 
     #train_dataset_2 = dataset.MicroscopicImages(root=args.imagedatapath, magnification=10, start_folder='2024-10-09', end_folder='2025-02-19', label_path=args.labelpath, transform=train_transform) 
  
-    val_dataset = dataset_zurich.MicroscopicImagesZurich(root=args.imagedatapath, start_folder='2013-01-08', end_folder='2020-08-10', label_path=args.labelpath, transform=val_transform)   
+    val_dataset = dataset_zurich.MicroscopicImagesZurich(root=args.imagedatapath, start_folder='2013-01-08', end_folder='2022-12-14', label_path=args.labelpath, transform=val_transform)   
     #val_dataset_2 = dataset.MicroscopicImages(root=args.imagedatapath, magnification=10, start_folder='2024-10-09', end_folder='2025-02-19', label_path=args.labelpath, transform=val_transform)   
     
     #train_dataset.image_paths.extend(train_dataset_2.image_paths)
@@ -186,7 +184,7 @@ if __name__ == "__main__":
                                               drop_path_rate=drop_path_rate)
                 elif 'convnext' in args.backbone:
                     model = timm.create_model(args.backbone, pretrained=True, 
-                                              num_classes=0, head_init_scale=0.001,
+                                              num_classes=n_classes, head_init_scale=0.001,
                                               drop_path_rate=drop_path_rate)
                 else:
                     model = timm.create_model(args.backbone, pretrained=True, 
@@ -213,10 +211,10 @@ if __name__ == "__main__":
                     model = timm.create_model(args.backbone, pretrained=False, 
                                               num_classes=n_classes)
    
-            # for param in model.parameters():
-            #     param.requires_grad = False 
-            # for param in model.fc.parameters():
-            #     param.requires_grad = True
+            for param in model.parameters():
+                param.requires_grad = False 
+            for param in model.head.parameters(): ## use  model.head for convnext
+                param.requires_grad = True
                 
             num_layers=3
             layer_decay= list(layer_decay ** (num_layers + 1 - i) for i in range(num_layers + 2))
@@ -239,9 +237,9 @@ if __name__ == "__main__":
             else:
                 print("!!! Layer-wise learning rates not available for the given network")
                 layer_wise_lr=model.parameters()
-
-            optimizer = torch.optim.AdamW(layer_wise_lr,                                          
-                                          lr=args.lr,  weight_decay=weight_decay) #standard lr=0.001
+            
+            optimizer = torch.optim.AdamW(model.head.parameters(),                                          
+                                          lr=args.lr,  weight_decay=weight_decay) 
             
             # learning rate update scheduler
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,
@@ -255,10 +253,16 @@ if __name__ == "__main__":
             
             best_model=copy.deepcopy(model)    
             model.to(device)
-
-            summary(model, input_size=(3, 384, 512))
+            summary(model, input_size=(3, 512, 384))
             
             for epoch in range(args.epochs):
+                if epoch == 5:  #Unfreezing full model
+                    for param in model.parameters():
+                        param.requires_grad = True
+
+                    optimizer = torch.optim.AdamW(layer_wise_lr, lr=args.lr, weight_decay=weight_decay)
+                    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs - epoch)
+        
                 torch.manual_seed(args.seed*(fold+1) + epoch)
                 np.random.seed(args.seed*(fold+1) + epoch)
             # for epoch in range(args.epochs):  # loop over the dataset multiple times

@@ -1,5 +1,11 @@
-data
-virtualenv
-trained_model
-output
-results
+data/
+trained_model/
+output/
+results/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.DS_Store
+.ipynb_checkpoints/
