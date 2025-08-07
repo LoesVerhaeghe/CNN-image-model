@@ -12,8 +12,8 @@ def parse_args():
     #data, paths, and other settings of general setup
     parser.add_argument('--imagedatapath', type=str, default= 'data/plant_zurich/Mikroskopie_structured', help='Path to load the image dataset')
     parser.add_argument('--labelpath', type=str, default= 'data/plant_zurich/SST_TSS.csv', help='Path to load the labels')
-    parser.add_argument('--output_path', type=str, default= 'output/zurich/SST_TSS_newhead', help='Path for saving models and metrics')    
-    parser.add_argument('--gpu', type=str, default='1', help='GPU ID to use for training (see nvidia-smi)')
+    parser.add_argument('--output_path', type=str, default= 'output/zurich/SST_TSS_extractfeatures', help='Path for saving models and metrics')    
+    parser.add_argument('--gpu', type=str, default='0', help='GPU ID to use for training (see nvidia-smi)')
     parser.add_argument('--multigpu',  action='store_true', default=False, help='Either to use parallel GPU processing or not')
   
     parser.add_argument('--tl',  action='store_true', default=True, help='Transfer learning or not')
@@ -48,7 +48,19 @@ import timm
 import sklearn.model_selection
 ##################################################################
 from src import dataset_zurich
-    
+
+### define the model: CNN layers + prediction head. this model also return features before final prediction head
+class CombinedModel(nn.Module):
+    def __init__(self, backbone_model, new_head):
+        super(CombinedModel, self).__init__()
+        self.backbone = backbone_model
+        self.head = new_head
+
+    def forward(self, image):
+        img_features = self.backbone(image)
+        out = self.head(img_features)
+        return out, img_features
+
 if __name__ == "__main__":
     args = parse_args()
     torch.set_num_threads(8)
@@ -76,7 +88,6 @@ if __name__ == "__main__":
                 brightness=0.2, contrast=0, saturation=0, hue=0),
                 ]), p=0.5),        
         ######
-        #ToCanny(),
         ###### geometric transformations
         transforms.RandomHorizontalFlip(p=0.5),
         transforms.RandomVerticalFlip(p=0.5),
@@ -186,7 +197,7 @@ if __name__ == "__main__":
                                               drop_path_rate=drop_path_rate)
                 elif 'convnext' in args.backbone:
                     model = timm.create_model(args.backbone, pretrained=True, 
-                                              num_classes=0, head_init_scale=0.001,
+                                              num_classes=0, head_init_scale=0.001, #NO CLASSIFICATION HEAD!!!!!! we will define it ourselves
                                               drop_path_rate=drop_path_rate)
                 else:
                     model = timm.create_model(args.backbone, pretrained=True, 
@@ -257,7 +268,20 @@ if __name__ == "__main__":
             model.to(device)
 
             summary(model, input_size=(3, 384, 512))
-            
+
+            #################### define new model with new head
+            num_image_features=model.num_features
+            print('model num features for images= ', num_image_features)
+
+            new_head = nn.Sequential(
+                nn.Linear(num_image_features, 64),  
+                nn.ReLU(),
+                nn.Linear(64, 1)  
+                )
+            new_head.to(device)
+
+            model = CombinedModel(backbone_model=model, new_head=new_head)
+
             for epoch in range(args.epochs):
                 torch.manual_seed(args.seed*(fold+1) + epoch)
                 np.random.seed(args.seed*(fold+1) + epoch)
@@ -294,7 +318,7 @@ if __name__ == "__main__":
                     # zero the parameter gradients
                     optimizer.zero_grad()  
                     with torch.cuda.amp.autocast():
-                        output = model(inputs) 
+                        output, _ = model(inputs) 
                         # print(output.size(), labels.size())
                         loss = criterion(output, labels)
                         # loss = criterion_weighted(output, labels, weight=weights)
@@ -332,7 +356,7 @@ if __name__ == "__main__":
                             inputs, labels = data[0].to(device), data[1].to(torch.float32).to(device)
                             labels = labels.unsqueeze(1)/TARGET_SCALE
 
-                        outputs = model(inputs)
+                        outputs, _ = model(inputs)
                         loss = criterion(outputs, labels) #no weighting loss during validation
                         vlo_bff.append(loss.item())                        
                     
@@ -377,31 +401,35 @@ if __name__ == "__main__":
             predictions = []
             all_labels = []
             all_preds = []
+            all_img_features = []
             best_model.eval()
-            for ii, data in enumerate(full_loader, 0):
-                if args.target == 'bulking':
-                    inputs, labels = data[0].to(device), data[1].to(torch.int64).to(device)
-                    
-                    predictions.append((labels.cpu().detach().numpy()[0],
-                                        best_model(inputs).cpu().detach().numpy()[0,0], best_model(inputs).cpu().detach().numpy()[0,1]))
-                    
-                else:
-                    inputs, labels = data[0].to(device), data[1].to(torch.float32).to(device)
-                    labels = labels.unsqueeze(1)
-                    preds = best_model(inputs).cpu().detach().numpy() * TARGET_SCALE
-                    all_labels.append(labels.cpu().detach().numpy())
-                    all_preds.append(preds)
-            
+            with torch.no_grad():
+                for ii, data in enumerate(full_loader, 0):
+                    if args.target == 'bulking':
+                        inputs, labels = data[0].to(device), data[1].to(torch.int64).to(device)
+                        
+                        predictions.append((labels.cpu().detach().numpy()[0],
+                                            best_model(inputs).cpu().detach().numpy()[0,0], best_model(inputs).cpu().detach().numpy()[0,1]))
+                        
+                    else:
+                        inputs, labels = data[0].to(device), data[1].to(torch.float32).to(device)
+                        labels = labels.unsqueeze(1)
+                        preds, img_features = best_model(inputs)
+                        preds = preds.cpu().detach().numpy() * TARGET_SCALE
+                        all_labels.append(labels.cpu().detach().numpy())
+                        all_preds.append(preds)
+                        all_img_features.append(img_features.cpu().detach().numpy())
+                
             all_labels = np.concatenate(all_labels)
             all_preds = np.concatenate(all_preds)
-               
+            all_img_features = np.concatenate(all_img_features)
+                
             with open(file, 'wb') as f:
                 pickle.dump([train_accs, train_losses, val_accs, val_losses, 
-                              converged_on, all_labels, all_preds], f)
+                              converged_on, all_labels, all_preds, all_img_features], f)
                 
             torch.save(best_model.state_dict(), file + '_NETWORK.pt')
 
-            
             del best_model
             best_model= []
                     
