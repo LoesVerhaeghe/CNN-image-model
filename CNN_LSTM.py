@@ -46,7 +46,7 @@ class DailySequenceDataset(Dataset):
         samples = []
 
         for i in range(self.seq_len - 1, len(self.dates)):
-            sequence_dates = self.dates[i - self.seq_len + 1:i]
+            sequence_dates = self.dates[i - self.seq_len + 1:i+1] # if i => forecasting. if i+1 => prediction
             feature_seq = []
             
             for date in sequence_dates:
