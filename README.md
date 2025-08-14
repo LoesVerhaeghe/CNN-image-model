@@ -7,7 +7,7 @@ Several changes have been made to improve generalization and reduce overfitting.
 
 ## Key Modifications
 - **Data augmentation**: added Gaussian blur and other transformations  
-- **Model head**: two fully connected layers with dropout (instead of one)  
+- **Model head**: two fully connected layers with dropout (instead of one) (only for convnext nano with transfer learning)
 - **Weight decay**: `1e-6` (instead of `1e-8` in transfer learning mode)  
 - **Learning rate scheduling**: `ReduceLROnPlateau` on validation loss (instead of cosine annealing)  
 - **Cross-validation**: no shuffling in k-fold splits  
