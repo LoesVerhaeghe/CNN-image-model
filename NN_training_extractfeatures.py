@@ -12,8 +12,8 @@ def parse_args():
     #data, paths, and other settings of general setup
     parser.add_argument('--imagedatapath', type=str, default= 'data/plant_zurich/Mikroskopie_structured', help='Path to load the image dataset')
     parser.add_argument('--labelpath', type=str, default= 'data/plant_zurich/SST_TSS.csv', help='Path to load the labels')
-    parser.add_argument('--output_path', type=str, default= 'output/zurich/SST_TSS_extractfeatures', help='Path for saving models and metrics')    
-    parser.add_argument('--gpu', type=str, default='0', help='GPU ID to use for training (see nvidia-smi)')
+    parser.add_argument('--output_path', type=str, default= 'output/zurich/SST_TSS_extractfeatures2', help='Path for saving models and metrics')    
+    parser.add_argument('--gpu', type=str, default='1', help='GPU ID to use for training (see nvidia-smi)')
     parser.add_argument('--multigpu',  action='store_true', default=False, help='Either to use parallel GPU processing or not')
   
     parser.add_argument('--tl',  action='store_true', default=True, help='Transfer learning or not')
@@ -68,7 +68,7 @@ if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(device)
 
-    BATCH_SIZE = 32 
+    BATCH_SIZE = 64
     # ImageNet normalization parameters and other img transformations
     averages =  (0.485, 0.456, 0.406)
     variances = (0.229, 0.224, 0.225)  
@@ -79,8 +79,8 @@ if __name__ == "__main__":
         
     train_transform = transforms.Compose([
         transforms.ToTensor(),        
-        transforms.Resize(imgdimm),
-        # transforms.RandomResizedCrop(imgdimm, scale=(0.8, 1.2), ratio=(1.0, 1.0)),
+        #transforms.Resize(imgdimm),
+        transforms.RandomResizedCrop(imgdimm, scale=(0.8, 1.2), ratio=(1.0, 1.0)),
         
         # Additional transformations
         transforms.RandomApply(
@@ -95,6 +95,7 @@ if __name__ == "__main__":
             torch.nn.ModuleList([transforms.RandomRotation(180),
                 ]), p=0.5),        
         transforms.RandomErasing(p=0.5, scale=(0.02, 0.2)),
+        transforms.GaussianBlur(kernel_size=(5, 9), sigma=(0.1, 5.0)),
         transforms.Normalize(averages, variances),   
     ])
     
@@ -190,7 +191,7 @@ if __name__ == "__main__":
                     drop_path_rate=0.2
                     
                 layer_decay = 0.8
-                weight_decay=1e-8
+                weight_decay=1e-6
                 if 'resnet' in args.backbone:
                     model = timm.create_model(args.backbone, pretrained=True, 
                                               num_classes=n_classes,
@@ -255,9 +256,12 @@ if __name__ == "__main__":
                                           lr=args.lr,  weight_decay=weight_decay) #standard lr=0.001
             
             # learning rate update scheduler
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,
-                                                                   T_max=args.epochs,
-                                                                   eta_min=0, last_epoch= -1)
+            # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,
+            #                                                        T_max=args.epochs,
+            #                                                        eta_min=0, last_epoch= -1)
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, mode='min', factor=0.75, patience=3, verbose=True
+            )
             scaler = torch.cuda.amp.GradScaler()
             
             if args.multigpu:
@@ -276,6 +280,7 @@ if __name__ == "__main__":
             new_head = nn.Sequential(
                 nn.Linear(num_image_features, 64),  
                 nn.ReLU(),
+                nn.Dropout(p=0.3),
                 nn.Linear(64, 1)  
                 )
             new_head.to(device)
@@ -339,7 +344,7 @@ if __name__ == "__main__":
                     #         #     ave_grads.append(0)
                     # batch_grads.append(ave_grads)
                 
-                scheduler.step()
+                # scheduler.step()
                 # gradients.append(np.mean(batch_grads, axis=0))
                 
                 tlosss = np.mean(running_loss)
@@ -362,6 +367,7 @@ if __name__ == "__main__":
                     
                 vlo = np.mean(vlo_bff)
                 vlo = vlo*TARGET_SCALE
+                scheduler.step(vlo)
                 # vlo = vlo * 1.4942304976316982 + 11.537147406898626 
                 #define here the convergence criterion. I considered accuracy on the paper
                 if len(val_losses) == 0 or vlo < min(val_losses): 
