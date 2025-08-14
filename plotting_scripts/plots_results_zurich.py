@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-output_path='output/zurich/SST_TSS_extrainputs_standardized'
+output_path='output/zurich/SST_TSS_extractfeatures'
 images_base_folder = 'data/plant_zurich/Mikroskopie_structured'
 
 image_folders = sorted(listdir(images_base_folder)) 
@@ -77,8 +77,8 @@ y_pred_lower = pd.Series(
 
 # # TRAIN 1
 # Define train and test indices
-train_indices= list(range(0, 285))       
-test_indices = list(range(285, 379))            
+train_indices= list(range(0, 260))       
+test_indices = list(range(260, 379))            
 plt.rcParams.update({'font.size': 12})    
 
 plt.figure(figsize=(14, 3), dpi=200)
