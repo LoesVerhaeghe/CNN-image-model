@@ -212,7 +212,7 @@ def train_model(model, train_loader, val_loader, optimizer, scheduler, criterion
     plt.legend()
 
     model.load_state_dict(best_model_state)
-    return model
+    return model, best_val_loss
 
 
 #####################################################################################################################################################################
@@ -232,100 +232,136 @@ for output in listdir(output_path):
             data = pickle.load(f)
             img_features=data[7]
             all_img_features.append(img_features)
-fold0_img_features=all_img_features[1]
 
-features_per_date={}
-target_per_date={}
-feature_folder_map = [] # Keep track of which folder index each feature belongs to
-processed_folder_indices = [] # Keep track of folders we actually found data for
-folder_idx_counter = 0 
-total_img_count = 0
-for folder in all_image_folders:
-    if folder not in target_per_date:
-        target_per_date[folder]=[]
-    # Path to embeddings for this folder
-    path_to_folder = f"{images_base_folder}/{folder}"
-    images_in_folder_count = 0
-    for subfolder in listdir(path_to_folder):
-        if subfolder:
-            path_to_subfolder=f"{path_to_folder}/{subfolder}"
-            if not os_path.exists(path_to_subfolder) or not listdir(path_to_subfolder):
-                print(f"Warning: path not found or empty for folder {folder}/{subfolder}, skipping.")
-                continue
-            images_list_embeddings = listdir(path_to_subfolder)
-            for image_file in images_list_embeddings:
-                if folder not in features_per_date:
-                    features_per_date[folder]=[]
-                try:
-                    # Save features
-                    img_path = f"{path_to_subfolder}/{image_file}"
-                    embedding = fold0_img_features[total_img_count]
-                    features_per_date[folder].append(embedding)
-                    total_img_count += 1
-                    images_in_folder_count += 1
-                except Exception as e:
-                    print(f"Error loading or processing {img_path}: {e}")
-                feature_folder_map.append(folder_idx_counter) # Store the *processed* folder index
-    if images_in_folder_count > 0:
-        processed_folder_indices.append(folder_idx_counter) # Add original index if processed
-        target_per_date[folder]=df_TSS['SST_TSS'].loc[folder].item() # Save label per date
-    folder_idx_counter += 1 # Move to the next folder's error value
+all_fold_pred=[]
+for fold_im_features in all_img_features:      
+    features_per_date={}
+    target_per_date={}
+    feature_folder_map = [] # Keep track of which folder index each feature belongs to
+    processed_folder_indices = [] # Keep track of folders we actually found data for
+    folder_idx_counter = 0 
+    total_img_count = 0
+    for folder in all_image_folders:
+        if folder not in target_per_date:
+            target_per_date[folder]=[]
+        # Path to embeddings for this folder
+        path_to_folder = f"{images_base_folder}/{folder}"
+        images_in_folder_count = 0
+        for subfolder in listdir(path_to_folder):
+            if subfolder:
+                path_to_subfolder=f"{path_to_folder}/{subfolder}"
+                if not os_path.exists(path_to_subfolder) or not listdir(path_to_subfolder):
+                    print(f"Warning: path not found or empty for folder {folder}/{subfolder}, skipping.")
+                    continue
+                images_list_embeddings = listdir(path_to_subfolder)
+                for image_file in images_list_embeddings:
+                    if folder not in features_per_date:
+                        features_per_date[folder]=[]
+                    try:
+                        # Save features
+                        img_path = f"{path_to_subfolder}/{image_file}"
+                        embedding = fold_im_features[total_img_count]
+                        features_per_date[folder].append(embedding)
+                        total_img_count += 1
+                        images_in_folder_count += 1
+                    except Exception as e:
+                        print(f"Error loading or processing {img_path}: {e}")
+                    feature_folder_map.append(folder_idx_counter) # Store the *processed* folder index
+        if images_in_folder_count > 0:
+            processed_folder_indices.append(folder_idx_counter) # Add original index if processed
+            target_per_date[folder]=df_TSS['SST_TSS'].loc[folder].item() # Save label per date
+        folder_idx_counter += 1 # Move to the next folder's error value
+        
+    seq_len=2
+    #### test dataset class
+    dataset = DailySequenceDataset(features_per_date, target_per_date, seq_len=seq_len, n_images=32)
+
+    # Check how many sequences were created
+    print(f"Number of sequences: {len(dataset.samples)}")
+    # Check first sequence shapes and target
+    for i, (features, target) in enumerate(dataset.samples):
+        print(f"Sequence {i} feature shape: {features.shape}")  # should be (seq_len, n_images, feature_dim)
+        print(f"Sequence {i} target: {target}")
+
+    # --- Split Based on Time (Processed Folders) ---
+    # Use the number of *processed* folders for splitting
+    train_indices_folders=np.arange(0, 210) 
+    val_indices_folders = np.arange(210, 260) 
+
+    train_set = Subset(dataset, train_indices_folders)
+    val_set = Subset(dataset, val_indices_folders)
+
+    train_loader = DataLoader(train_set, batch_size=16, shuffle=True)
+    val_loader = DataLoader(val_set, batch_size=16, shuffle=True)
+
+    ## define and train model
+    torch.cuda.set_device(2) 
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = FullPipelineModel(input_dim=640, 
+                            #transformer parameters
+                            embed_dim=128,
+                            n_heads=8, 
+                            n_layers=2,
+                            agg_output_dim=128,
+                            #lstm parameters
+                            lstm_hidden=256,
+                            num_layers=1).to(device)
+    optimizer = optim.Adam(model.parameters(), lr=1e-4)
+    scheduler =  torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5, factor=0.85)
+    criterion = nn.MSELoss()
+
+    trained_model, best_val_loss=train_model(model, train_loader, val_loader, optimizer, scheduler, criterion, epochs=200, device=device)
+
     
-seq_len=3
-#### test dataset class
-dataset = DailySequenceDataset(features_per_date, target_per_date, seq_len=seq_len, n_images=32)
+    ### testing
+    full_loader = DataLoader(dataset, batch_size=1, shuffle=False)
+    all_preds=[]
+    trained_model.eval()
+    with torch.no_grad():
+        for X, y in full_loader:
+            X, y = X.to(device), y.to(device).float()
+            preds = trained_model(X)
+            all_preds.append(preds.cpu().item())
+    if best_val_loss < 2: #only use this one for final predictions is validation loss is ok
+        all_fold_pred.append(all_preds)
 
-# Check how many sequences were created
-print(f"Number of sequences: {len(dataset.samples)}")
-# Check first sequence shapes and target
-for i, (features, target) in enumerate(dataset.samples):
-    print(f"Sequence {i} feature shape: {features.shape}")  # should be (seq_len, n_images, feature_dim)
-    print(f"Sequence {i} target: {target}")
+    all_image_folders_datetime=pd.to_datetime(all_image_folders)
+    df_TSS.index=pd.to_datetime(df_TSS.index)
 
-# --- Split Based on Time (Processed Folders) ---
-# Use the number of *processed* folders for splitting
-train_indices_folders=np.arange(0, 250) 
-val_indices_folders = np.arange(250, 300) 
+    # --- Construct Model preds ---
+    TSS_predictions = pd.Series(
+        all_preds,
+        index=all_image_folders_datetime[seq_len-1:]
+    )
 
-train_set = Subset(dataset, train_indices_folders)
-val_set = Subset(dataset, val_indices_folders)
+    # --- Plotting Results ---
+    plt.figure(figsize=(14, 3), dpi=200)
+    plt.rcParams.update({'font.size': 12})    
+    plt.plot(df_TSS['SST_TSS'].iloc[seq_len-1:], '.-', label='Measurements', color='blue')
+    plt.plot(TSS_predictions.iloc[0:len(train_indices_folders)], '.-', label='predictions (train)', color='orange')
+    plt.plot(TSS_predictions.iloc[len(train_indices_folders):len(train_indices_folders)+len(val_indices_folders)], '.-', label='predictions (val)', color='green')
+    plt.plot(TSS_predictions.iloc[len(train_indices_folders)+len(val_indices_folders):], '.-', label='predictions (test)', color='red')
+    plt.xlabel("Time")
+    plt.ylabel("TSS (mg/L)")
+    plt.legend()
+    plt.show()
 
-train_loader = DataLoader(train_set, batch_size=16, shuffle=True)
-val_loader = DataLoader(val_set, batch_size=16, shuffle=True)
+avg_preds = np.mean(all_fold_pred, axis=0)
+std_dev = np.std(all_fold_pred, axis=0)
 
-## define and train model
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model = FullPipelineModel(input_dim=640, 
-                          #transformer parameters
-                          embed_dim=128,
-                          n_heads=4, 
-                          n_layers=2,
-                          agg_output_dim=128,
-                          #lstm parameters
-                          lstm_hidden=32,
-                          num_layers=1).to(device)
-optimizer = optim.Adam(model.parameters(), lr=1e-5)
-scheduler =  None #torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5, factor=0.85)
-criterion = nn.MSELoss()
-
-trained_model=train_model(model, train_loader, val_loader, optimizer, scheduler, criterion, epochs=600, device=device)
-
-### testing
-full_loader = DataLoader(dataset, batch_size=1, shuffle=False)
-all_preds=[]
-trained_model.eval()
-with torch.no_grad():
-    for X, y in full_loader:
-        X, y = X.to(device), y.to(device).float()
-        preds = trained_model(X)
-        all_preds.append(preds.cpu().item())
-
-all_image_folders_datetime=pd.to_datetime(all_image_folders)
-df_TSS.index=pd.to_datetime(df_TSS.index)
 
 # --- Construct Model preds ---
 TSS_predictions = pd.Series(
-    all_preds,
+    avg_preds,
+    index=all_image_folders_datetime[seq_len-1:]
+)
+
+y_pred_upper = pd.Series(
+    TSS_predictions.values + std_dev,
+    index=all_image_folders_datetime[seq_len-1:]
+)
+y_pred_lower = pd.Series(
+    TSS_predictions.values - std_dev,
     index=all_image_folders_datetime[seq_len-1:]
 )
 
@@ -339,5 +375,24 @@ plt.plot(TSS_predictions.iloc[len(train_indices_folders)+len(val_indices_folders
 plt.xlabel("Time")
 plt.ylabel("TSS (mg/L)")
 plt.legend()
-plt.show()
+# Plot Std Dev Band for Train – Part 1
+plt.fill_between(TSS_predictions.index[0:len(train_indices_folders)],
+                 y_pred_lower[0:len(train_indices_folders)],
+                 y_pred_upper[0:len(train_indices_folders)],
+                 color='orange', alpha=0.2, zorder=1)
 
+# Plot Std Dev Band for Test
+plt.fill_between(TSS_predictions.index[len(train_indices_folders):len(train_indices_folders)+len(val_indices_folders)],
+                 y_pred_lower[len(train_indices_folders):len(train_indices_folders)+len(val_indices_folders)],
+                 y_pred_upper[len(train_indices_folders):len(train_indices_folders)+len(val_indices_folders)],
+                 color='green', alpha=0.2, zorder=1)
+# Plot Std Dev Band for Test
+plt.fill_between(TSS_predictions.index[len(train_indices_folders)+len(val_indices_folders):],
+                 y_pred_lower[len(train_indices_folders)+len(val_indices_folders):],
+                 y_pred_upper[len(train_indices_folders)+len(val_indices_folders):],
+                 color='red', alpha=0.2, zorder=1)
+
+plt.xlabel("Time")
+plt.ylabel("TSS effluent (mg/L)")
+plt.legend()
+plt.show()
