@@ -89,3 +89,62 @@ def extract_image_paths_zurich(path_to_folders, start_folder, end_folder):
             for image in images_list:
                 all_paths.append(f"{path_to_image}/{image}")
     return all_paths
+
+
+def extract_image_paths_pantarein(path_to_folders, start_folder, end_folder):
+    """
+    Extract paths from all the images from the specified folder.
+
+    Parameters:
+        base_folder (str): The base folder containing subfolders with images.
+        start_folder: start date from which images need to be extracted
+        end_folder: end date until which images need to be extracted
+
+    Returns:
+        all_images (list): A list of all extracted images.
+    """
+    image_folders = sorted(listdir(path_to_folders)) 
+
+    all_paths = []
+
+    # Select the images from start until end date
+    selected_folders = [folder for folder in image_folders if start_folder <= folder <= end_folder]
+    selected_folders = sorted(selected_folders)
+
+    # Save all paths from the selected folders
+    for folder in selected_folders:
+        path_to_image = f"{path_to_folders}/{folder}"
+        images_list = listdir(path_to_image)
+        for image in images_list:
+            all_paths.append(f"{path_to_image}/{image}")
+    return all_paths
+
+
+
+def extract_image_paths_bath(path_to_folders, start_folder, end_folder):
+    """
+    Extract paths from all the images from the specified folder.
+
+    Parameters:
+        base_folder (str): The base folder containing subfolders with images.
+        start_folder: start date from which images need to be extracted
+        end_folder: end date until which images need to be extracted
+
+    Returns:
+        all_images (list): A list of all extracted images.
+    """
+    image_folders = sorted(listdir(path_to_folders)) 
+
+    all_paths = []
+
+    # Select the images from start until end date
+    selected_folders = [folder for folder in image_folders if start_folder <= folder <= end_folder]
+    selected_folders = sorted(selected_folders)
+
+    # Save all paths from the selected folders
+    for folder in selected_folders:
+        path_to_image = f"{path_to_folders}/{folder}"
+        images_list = listdir(path_to_image)
+        for image in images_list:
+            all_paths.append(f"{path_to_image}/{image}")
+    return all_paths

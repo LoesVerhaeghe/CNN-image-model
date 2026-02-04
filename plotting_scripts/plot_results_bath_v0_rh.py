@@ -5,7 +5,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-output_path='output/pileaute/Qair'
+output_path='output/bath/v0_rh_withDNAinput'
+#output_path='output/bath/v0_rh'
 
 all_labels = []
 all_preds = []
@@ -47,23 +48,29 @@ y_pred_lower = y_predicted - std_dev
 
 
 # Define train and test indices
-train_indices= list(range(0, 80))       
-test_indices = list(range(80, 111))            
+train_indices1 = list(range(0, 13))
+train_indices2= list(range(18, 23))  # 0–12 and 18–23
+train_indices=list(range(0, 13))+list(range(18, 23))
+test_indices = list(range(13, 18))  # 13–17
 
 #plot time series
 plt.rcParams.update({'font.size': 12})    
 plt.figure(figsize=(14, 3), dpi=200)
 plt.plot(y_true, '.-', label='Measurements', color='blue')
-plt.plot(y_predicted.iloc[train_indices], '.-', label='Model predictions (train)', color='orange')
+plt.plot(y_predicted.iloc[train_indices1], '.-', label='Model predictions (train)', color='orange')
+plt.plot(y_predicted.iloc[train_indices2], '.-', color='orange')
 plt.plot(y_predicted.iloc[test_indices], '.-', label='Model predictions (test)', color='red')
 plt.xlabel("Time")
-plt.ylabel("Qair (L/min)")
+plt.ylabel("V0/rH")
 plt.legend()
-plt.savefig('/home/loesv/all_results/pileaute/Qair/CNN.png',  bbox_inches='tight', dpi=250)
-plt.savefig('/home/loesv/all_results/pileaute/Qair/CNN.pdf',  bbox_inches='tight', dpi=250)
+#plt.savefig('/home/loesv/all_results/bath/v0_rh_images/CNN.png',  bbox_inches='tight', dpi=250)
+#plt.savefig('/home/loesv/all_results/bath/v0_rh_images/CNN.pdf',  bbox_inches='tight', dpi=250)
+plt.savefig('/home/loesv/all_results/bath/v0_rh_imagesandDNA/CNN.png',  bbox_inches='tight', dpi=250)
+plt.savefig('/home/loesv/all_results/bath/v0_rh_imagesandDNA/CNN.pdf',  bbox_inches='tight', dpi=250)
 plt.show()
 
-from sklearn.metrics import r2_score, root_mean_squared_error, mean_absolute_error
+
+from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 
 plt.figure(figsize=(6, 6), dpi=250)
 plt.rcParams.update({'font.size': 12})
@@ -93,25 +100,27 @@ from scipy.stats import pearsonr, spearmanr
 
 def metrics(y_true, y_pred):
     r2 = r2_score(y_true, y_pred)
-    rmse = root_mean_squared_error(y_true, y_pred)
+    mse = mean_squared_error(y_true, y_pred)
     mae = mean_absolute_error(y_true, y_pred)
     pearson_corr, _ = pearsonr(y_true, y_pred)
     spearman_corr, _ = spearmanr(y_true, y_pred)
-    return r2, rmse, mae, pearson_corr, spearman_corr
+    return r2, mse, mae, pearson_corr, spearman_corr
 
-r2_train, rmse_train, mae_train, pearson_train, spearman_train = metrics(y_true_train, y_pred_train)
-r2_test, rmse_test, mae_test, pearson_test, spearman_test = metrics(y_true_test, y_pred_test)
+r2_train, mse_train, mae_train, pearson_train, spearman_train = metrics(y_true_train, y_pred_train)
+r2_test, mse_test, mae_test, pearson_test, spearman_test = metrics(y_true_test, y_pred_test)
 
 # Annotate metrics in the plot
 textstr = '\n'.join((
-    f"Train: R²={r2_train:.2f}, RMSE={rmse_train:.2f}, MAE={mae_train:.2f}, "
-    f"Pearson={pearson_train:.2f}, Spearman={spearman_train:.2f}",
-    f"Test:  R²={r2_test:.2f}, RMSE={rmse_test:.2f}, MAE={mae_test:.2f}, "
-    f"Pearson={pearson_test:.2f}, Spearman={spearman_test:.2f}"
+    f"Train: R²={r2_train:.3g}, MSE={mse_train:.3g}, MAE={mae_train:.3g}, "
+    f"Pearson={pearson_train:.3g}, Spearman={spearman_train:.3g}",
+    f"Test:  R²={r2_test:.3g}, MSE={mse_test:.3g}, MAE={mae_test:.3g}, "
+    f"Pearson={pearson_test:.3g}, Spearman={spearman_test:.3g}"
 ))
 
 plt.figtext(0.5, -0.05, textstr, ha='center', fontsize=10, bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.7))
 plt.tight_layout()
-plt.savefig('/home/loesv/all_results/pileaute/Qair/CNN_scatterplot.png',  bbox_inches='tight', dpi=250)
-plt.savefig('/home/loesv/all_results/pileaute/Qair/CNN_scatterplot.pdf',  bbox_inches='tight', dpi=250)
+#plt.savefig('/home/loesv/all_results/bath/v0_rh_images/CNN_scatterplot.png',  bbox_inches='tight', dpi=250)
+#plt.savefig('/home/loesv/all_results/bath/v0_rh_images/CNN_scatterplot.pdf',  bbox_inches='tight', dpi=250)
+plt.savefig('/home/loesv/all_results/bath/v0_rh_imagesandDNA/CNN_scatterplot.png',  bbox_inches='tight', dpi=250)
+plt.savefig('/home/loesv/all_results/bath/v0_rh_imagesandDNA/CNN_scatterplot.pdf',  bbox_inches='tight', dpi=250)
 plt.show()

@@ -10,10 +10,10 @@ import argparse
 def parse_args():
     parser = argparse.ArgumentParser(description="Experimenter: compares models with different initialization")
     #data, paths, and other settings of general setup
-    parser.add_argument('--imagedatapath', type=str, default= 'data/plant_zurich/Mikroskopie_structured', help='Path to load the image dataset')
-    parser.add_argument('--extrainputpath', type=str, default= 'data/plant_zurich/SST_TSS_extrainputs_standardized.csv', help='Path to load the labels')
-    parser.add_argument('--labelpath', type=str, default= 'data/plant_zurich/SST_TSS.csv', help='Path to load the labels')
-    parser.add_argument('--output_path', type=str, default= 'output/zurich/SST_TSS_extrainputs_standardized', help='Path for saving models and metrics')    
+    parser.add_argument('--imagedatapath', type=str, default= 'data/pantarein/image_data_pantarein_structured', help='Path to load the image dataset')
+    parser.add_argument('--extrainputpath', type=str, default= 'data/pantarein/MLSS.csv', help='Path to load the labels')
+    parser.add_argument('--labelpath', type=str, default= 'data/pantarein/upward_DO_slope.csv', help='Path to load the labels')
+    parser.add_argument('--output_path', type=str, default= 'output/pantarein/do_slope_MLSSextrainput', help='Path for saving models and metrics')    
     parser.add_argument('--gpu', type=str, default='1', help='GPU ID to use for training (see nvidia-smi)')
     parser.add_argument('--multigpu',  action='store_true', default=False, help='Either to use parallel GPU processing or not')
   
@@ -23,7 +23,7 @@ def parse_args():
     parser.add_argument('--lr', type=float, default=5e-5, help='learning rate')   
     parser.add_argument('--epochs', type=int, default=30, help='Number of training epochs.')
     parser.add_argument('--K', type=int, default=10, help='K-fold splits')
-    parser.add_argument('--target', type=str, default='SST_TSS', help='Target to train on')
+    parser.add_argument('--target', type=str, default='DO_slope', help='Target to train on')
 
     return parser.parse_args()
 
@@ -75,28 +75,29 @@ if __name__ == "__main__":
     averages =  (0.485, 0.456, 0.406)
     variances = (0.229, 0.224, 0.225)  
     
-    imgdimm = (384, 512)
+    imgdimm = (512, 384)
 
     # REGULARIZATION/DATA AUG.
         
     train_transform = transforms.Compose([
         transforms.ToTensor(),        
-        transforms.Resize(imgdimm),
-        # transforms.RandomResizedCrop(imgdimm, scale=(0.8, 1.2), ratio=(1.0, 1.0)),
+        #transforms.Resize(imgdimm),
+        transforms.RandomResizedCrop(imgdimm, scale=(0.9, 1.1), ratio=(1.0, 1.0)),
+        
+        # Additional transformations
+        transforms.RandomApply(
+            torch.nn.ModuleList([transforms.ColorJitter(
+                brightness=0.1, contrast=0.05, saturation=0, hue=0),
+                ]), p=0.5),        
+        ######
         ###### geometric transformations
         transforms.RandomHorizontalFlip(p=0.5),
         transforms.RandomVerticalFlip(p=0.5),
         transforms.RandomApply(
-            torch.nn.ModuleList([transforms.RandomRotation(180),
+            torch.nn.ModuleList([transforms.RandomRotation(30),
                 ]), p=0.5),        
-        transforms.RandomErasing(p=0.5, scale=(0.02, 0.2)),
-        ######
-        # Additional transformations
-        transforms.RandomApply(
-            torch.nn.ModuleList([transforms.ColorJitter(
-                brightness=0.2, contrast=0, saturation=0, hue=0),
-                ]), p=0.5),        
-        ######
+        transforms.RandomErasing(p=0.3, scale=(0.02, 0.1)),
+        transforms.GaussianBlur(kernel_size=(3, 5), sigma=(0.1, 2.0)),
         transforms.Normalize(averages, variances),   
     ])
     
@@ -106,10 +107,10 @@ if __name__ == "__main__":
         transforms.Normalize(averages, variances),        
     ])
    
-    train_dataset = dataset_extrainputs.MicroscopicImagesZurich(root=args.imagedatapath, start_folder='2013-01-08', end_folder='2020-08-10', label_path=args.labelpath, extrainput_path=args.extrainputpath, transform=train_transform) 
+    train_dataset = dataset_extrainputs.MicroscopicImagesPantarein(root=args.imagedatapath, start_folder='2021-01-04', end_folder='2022-02-08', label_path=args.labelpath, extrainput_path=args.extrainputpath, transform=train_transform) 
     #train_dataset_2 = dataset.MicroscopicImages(root=args.imagedatapath, magnification=10, start_folder='2024-10-09', end_folder='2025-02-19', label_path=args.labelpath, transform=train_transform) 
- 
-    val_dataset = dataset_extrainputs.MicroscopicImagesZurich(root=args.imagedatapath, start_folder='2013-01-08', end_folder='2020-08-10', label_path=args.labelpath,extrainput_path=args.extrainputpath, transform=val_transform)       # val_dataset_2 = dataset_extrainputs.MicroscopicImages(root=args.imagedatapath, magnification=10, start_folder='2024-10-09', end_folder='2025-02-19', label_path=args.labelpath,extrainput_path=args.extrainputpath, transform=val_transform)   
+
+    val_dataset = dataset_extrainputs.MicroscopicImagesPantarein(root=args.imagedatapath, start_folder='2021-01-04', end_folder='2022-02-08', label_path=args.labelpath, extrainput_path=args.extrainputpath, transform=val_transform)   
     
     #train_dataset.image_paths.extend(train_dataset_2.image_paths)
     #train_dataset.targets.extend(train_dataset_2.targets)
@@ -168,7 +169,7 @@ if __name__ == "__main__":
             #                                     for indd in train_index])
             
             trainloader = torch.utils.data.DataLoader(train, batch_size = BATCH_SIZE, shuffle = True,
-                                                      drop_last=False, pin_memory=True, num_workers=num_workers)
+                                                      drop_last=True, pin_memory=True, num_workers=num_workers)
             
             valloader = torch.utils.data.DataLoader(val, batch_size = 1, shuffle = False,
                                                      drop_last=False, num_workers=num_workers)
@@ -191,7 +192,7 @@ if __name__ == "__main__":
                     drop_path_rate=0.2
                     
                 layer_decay = 0.8
-                weight_decay=1e-8
+                weight_decay=1e-6
                 if 'resnet' in args.backbone:
                     model = timm.create_model(args.backbone, pretrained=True, 
                                               num_classes=n_classes,
@@ -229,7 +230,22 @@ if __name__ == "__main__":
             #     param.requires_grad = False 
             # for param in model.fc.parameters():
             #     param.requires_grad = True
-                
+            num_image_features=model.num_features
+            print('model num features for images= ', num_image_features)
+            num_lab_features=1
+            combined_features_size = num_image_features + num_lab_features
+            print(f"Combined feature size (image + lab): {combined_features_size}")
+
+            new_head = nn.Sequential(
+                nn.Linear(combined_features_size, 64),  
+                nn.ReLU(),
+                nn.Linear(64, 1)  
+                )
+            new_head.to(device)
+
+            model = CombinedModel(backbone_model=model, new_head=new_head)    
+
+            
             num_layers=3
             layer_decay= list(layer_decay ** (num_layers + 1 - i) for i in range(num_layers + 2))
             
@@ -242,10 +258,10 @@ if __name__ == "__main__":
                                 {"params": model.fc.parameters(), "lr": args.lr*layer_decay[4]},
                                 ]
             elif 'convnext' in args.backbone:
-                layer_wise_lr=[ {"params": model.stages[0].parameters(), "lr": args.lr*layer_decay[0]},
-                                {"params": model.stages[1].parameters(), "lr": args.lr*layer_decay[1]},
-                                {"params": model.stages[2].parameters(), "lr": args.lr*layer_decay[2]},
-                                {"params": model.stages[3].parameters(), "lr": args.lr*layer_decay[3]},
+                layer_wise_lr=[ {"params": model.backbone.stages[0].parameters(), "lr": args.lr*layer_decay[0]},
+                                {"params": model.backbone.stages[1].parameters(), "lr": args.lr*layer_decay[1]},
+                                {"params": model.backbone.stages[2].parameters(), "lr": args.lr*layer_decay[2]},
+                                {"params": model.backbone.stages[3].parameters(), "lr": args.lr*layer_decay[3]},
                                 {"params": model.head.parameters(), "lr": args.lr*layer_decay[4]},
                                 ]
             else:
@@ -256,9 +272,13 @@ if __name__ == "__main__":
                                           lr=args.lr,  weight_decay=weight_decay) #standard lr=0.001
             
             # learning rate update scheduler
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,
-                                                                   T_max=args.epochs,
-                                                                   eta_min=0, last_epoch= -1)
+            # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,
+            #                                                        T_max=args.epochs,
+            #                                                        eta_min=0, last_epoch= -1)
+
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, mode='min', factor=0.75, patience=3, verbose=True
+            )
             scaler = torch.cuda.amp.GradScaler()
             
             if args.multigpu:
@@ -268,23 +288,10 @@ if __name__ == "__main__":
             best_model=copy.deepcopy(model)    
             model.to(device)
             from torchsummary import summary
-            summary(model, input_size=(3, 384, 512))
+            summary(model, input_size=(3, 512, 384))
 
             #################### define new model with extra input and thus new head
-            num_image_features=model.num_features
-            print('model num features for images= ', num_image_features)
-            num_lab_features=6
-            combined_features_size = num_image_features + num_lab_features
-            print(f"Combined feature size (image + lab): {combined_features_size}")
 
-            new_head = nn.Sequential(
-                nn.Linear(combined_features_size, 64),  
-                nn.ReLU(),
-                nn.Linear(64, 1)  
-                )
-            new_head.to(device)
-
-            model = CombinedModel(backbone_model=model, new_head=new_head)
 
             for epoch in range(args.epochs):
                 torch.manual_seed(args.seed*(fold+1) + epoch)
@@ -342,7 +349,7 @@ if __name__ == "__main__":
                     #         #     ave_grads.append(0)
                     # batch_grads.append(ave_grads)
                 
-                scheduler.step()
+                # scheduler.step()
                 # gradients.append(np.mean(batch_grads, axis=0))
                 
                 tlosss = np.mean(running_loss)
@@ -365,6 +372,7 @@ if __name__ == "__main__":
                     
                 vlo = np.mean(vlo_bff)
                 vlo = vlo*TARGET_SCALE
+                scheduler.step(vlo)
                 # vlo = vlo * 1.4942304976316982 + 11.537147406898626 
                 #define here the convergence criterion. I considered accuracy on the paper
                 if len(val_losses) == 0 or vlo < min(val_losses): 
@@ -392,9 +400,9 @@ if __name__ == "__main__":
             del model
             model = []   
 
-            full_dataset = dataset_extrainputs.MicroscopicImagesZurich(root=args.imagedatapath, 
-                                                     start_folder='2013-01-08',
-                                                     end_folder='2024-11-28',
+            full_dataset = dataset_extrainputs.MicroscopicImagesPantarein(root=args.imagedatapath, 
+                                                     start_folder='2021-01-04', 
+                                                     end_folder='2022-12-13',
                                                      label_path=args.labelpath, 
                                                      extrainput_path=args.extrainputpath,
                                                      transform=val_transform) # Use validation transform for testing
@@ -405,6 +413,7 @@ if __name__ == "__main__":
                              pin_memory=True)         
             predictions = []
             all_labels = []
+            all_dates = []
             all_preds = []
             best_model.eval()
             for ii, data in enumerate(full_loader, 0):
@@ -414,17 +423,19 @@ if __name__ == "__main__":
                                         best_model(inputs, extrainputs).cpu().detach().numpy()[0,0], best_model(inputs, extrainputs).cpu().detach().numpy()[0,1]))
                     
                 else:
-                    inputs, labels, extrainputs = data[0].to(device), data[1].to(torch.float32).to(device), data[2].to(torch.float32).to(device)  
+                    inputs, labels, extrainputs, dates = data[0].to(device), data[1].to(torch.float32).to(device), data[2].to(torch.float32).to(device), data[3]
                     labels = labels.unsqueeze(1)
                     preds = best_model(inputs, extrainputs).cpu().detach().numpy() * TARGET_SCALE
                     all_labels.append(labels.cpu().detach().numpy())
                     all_preds.append(preds)
+                    all_dates.append(dates)
             
             all_labels = np.concatenate(all_labels)
-            all_preds = np.concatenate(all_preds)                
+            all_preds = np.concatenate(all_preds)          
+            all_dates = np.concatenate(all_dates)      
             with open(file, 'wb') as f:
                 pickle.dump([train_accs, train_losses, val_accs, val_losses, 
-                              converged_on, all_labels, all_preds], f)
+                              converged_on, all_labels, all_preds, all_dates], f)
                 
             torch.save(best_model.state_dict(), file + '_NETWORK.pt')
 

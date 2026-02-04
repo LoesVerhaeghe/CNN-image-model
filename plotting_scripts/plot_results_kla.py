@@ -5,147 +5,113 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-output_path='output/aeration/KLa_train1'
-images_base_folder = 'data/beluchting/images_pileaute_kla'
-
-image_folders = sorted(listdir(images_base_folder)) 
+output_path='output/pileaute/KLa/KLa'
 
 all_labels = []
 all_preds = []
+all_dates=[]
 for output in listdir(output_path):
     if output.endswith('.pk'):
         with open(os.path.join(output_path, output), 'rb') as f:
             data = pickle.load(f)
-            labels=data[5]
-            preds=data[6]
-            all_labels.append(labels)
-            all_preds.append(preds)
+            labels = np.array(data[5]).flatten()
+            preds = np.array(data[6]).flatten()
+            dates = np.array([d[0] if isinstance(d, (list, tuple, np.ndarray)) else d for d in data[8]])
 
-#calc average per fold
-avg_preds = np.mean([all_preds[i] for i in range(4)], axis=0)
-avg_labels= np.mean([all_labels[i] for i in range(4)], axis=0)
+            all_labels.extend(labels)
+            all_preds.extend(preds)
+            all_dates.extend(dates)
+df = pd.DataFrame({
+    'date': all_dates,
+    'label': all_labels,
+    'pred': all_preds
+})
 
-y_predicted = []
-y_true = []
-std_dev = []
-i=0
-for folder in image_folders:
-    path = f"{images_base_folder}/{folder}/basin5/10x"
-    images_list = listdir(path)
-    temporary_pred=[]
-    temporary_label=[]
-    for image in images_list:
-        pred = avg_preds[i]
-        label=avg_labels[i]
-        i+=1
-        temporary_pred.append(pred)
-        temporary_label.append(label)
-    y_predicted.append(sum(temporary_pred)/len(temporary_pred))
-    y_true.append(sum(temporary_label)/len(temporary_label))
-    std_dev.append(np.std(temporary_pred))
-
-std_dev = np.array(std_dev)
-y_predicted = np.array(y_predicted)
-
-y_pred_upper = y_predicted.flatten() + std_dev
-y_pred_lower = y_predicted.flatten() - std_dev
-
-#y_true=pd.read_csv('data/SVI/cleaned_SVIs_interpolated.csv', index_col=0)
-y_true = pd.Series(y_true, index=pd.to_datetime(image_folders))
-y_predicted = pd.DataFrame(y_predicted, index=pd.to_datetime(image_folders))
+df_avg = df.groupby('date', as_index=False).agg(
+    label_mean=('label', 'mean'),
+    pred_mean=('pred', 'mean'),
+    pred_std=('pred', 'std')
+)
 
 
-# #### make plot
+df_avg=df_avg.set_index('date')
+df_avg.index=pd.to_datetime(df_avg.index)
 
-# TRAIN 1
+# --- Prepare data for plotting ---
+y_true = df_avg['label_mean']
+y_predicted = df_avg['pred_mean']
+std_dev = df_avg['pred_std']
+
+y_pred_upper = y_predicted + std_dev
+y_pred_lower = y_predicted - std_dev
+
+
 # Define train and test indices
-train_indices= list(range(0, 64))       
-test_indices = list(range(64, 87))         
+train_indices= list(range(0, 70))       
+test_indices = list(range(70, 111))            
+
+#plot time series
 plt.rcParams.update({'font.size': 12})    
 plt.figure(figsize=(14, 3), dpi=200)
 plt.plot(y_true, '.-', label='Measurements', color='blue')
-# Plot model predictions
-plt.plot(y_predicted.iloc[train_indices], '.-', label='HM predictions (train)', color='orange')
-plt.plot(y_predicted.iloc[test_indices], '.-', label='HM predictions (test)', color='red')
-# Plot Std Dev Band for Train – Part 1
-plt.fill_between(y_predicted.index[train_indices],
-                 y_pred_lower[train_indices],
-                 y_pred_upper[train_indices],
-                 color='orange', alpha=0.2, zorder=1)
-# Plot Std Dev Band for Test
-plt.fill_between(y_predicted.index[test_indices],
-                 y_pred_lower[test_indices],
-                 y_pred_upper[test_indices],
-                 color='red', alpha=0.2, zorder=1)
+plt.plot(y_predicted.iloc[train_indices], '.-', label='Model predictions (train)', color='orange')
+plt.plot(y_predicted.iloc[test_indices], '.-', label='Model predictions (test)', color='red')
 plt.xlabel("Time")
 plt.ylabel("KLa (1/h)")
 plt.legend()
+plt.savefig('/home/loesv/all_results/pileaute/KLa/CNN.png',  bbox_inches='tight', dpi=250)
+plt.savefig('/home/loesv/all_results/pileaute/KLa/CNN.pdf',  bbox_inches='tight', dpi=250)
 plt.show()
 
+from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 
-# ##TRAIN 2
-# ##Define train and test indices
-# train_indices_part1 = list(range(0, 30))      
-# train_indices_part2 = list(range(59, 87))      
-# test_indices = list(range(30, 59))            
+plt.figure(figsize=(6, 6), dpi=250)
+plt.rcParams.update({'font.size': 12})
 
-# plt.figure(figsize=(14, 3), dpi=150)
-# plt.plot(y_true, '.-', label='Measurements', color='blue')
+# Extract true values and predictions for each split
+y_true_train = y_true.iloc[train_indices]
+y_pred_train = y_predicted.iloc[train_indices]
+y_true_test = y_true.iloc[test_indices]
+y_pred_test = y_predicted.iloc[test_indices]
 
-# # Plot model predictions
-# plt.plot(y_predicted.iloc[train_indices_part1], '.-', label='Model predictions (train)', color='orange')
-# plt.plot(y_predicted.iloc[train_indices_part2], '.-', color='orange')
-# plt.plot(y_predicted.iloc[test_indices], '.-', label='Model predictions (test)', color='red')
+# Scatter plots
+plt.scatter(y_true_train, y_pred_train, color='orange', alpha=0.7, label='Train')
+plt.scatter(y_true_test, y_pred_test, color='red', alpha=0.7, label='Test')
 
-# # Plot Std Dev Band for Train – Part 1
-# plt.fill_between(y_predicted.index[train_indices_part1],
-#                  y_pred_lower[train_indices_part1],
-#                  y_pred_upper[train_indices_part1],
-#                  color='orange', alpha=0.2, zorder=1)
+# 1:1 line
+lims = [
+    min(y_true.min(), y_predicted.min()),
+    max(y_true.max(), y_predicted.max())
+]
+plt.plot(lims, lims, 'k--', alpha=0.8, label='1:1 line')
 
-# # Plot Std Dev Band for Train – Part 2
-# plt.fill_between(y_predicted.index[train_indices_part2],
-#                  y_pred_lower[train_indices_part2],
-#                  y_pred_upper[train_indices_part2],
-#                  color='orange', alpha=0.2, zorder=1)
+plt.xlabel("Measured")
+plt.ylabel("Predicted")
+plt.legend()
 
-# # Plot Std Dev Band for Test
-# plt.fill_between(y_predicted.index[test_indices],
-#                  y_pred_lower[test_indices],
-#                  y_pred_upper[test_indices],
-#                  color='red', alpha=0.2, zorder=1)
+from scipy.stats import pearsonr, spearmanr
 
-# plt.xlabel("Time")
-# plt.ylabel("KLa")
-# plt.legend()
-# plt.show()
+def metrics(y_true, y_pred):
+    r2 = r2_score(y_true, y_pred)
+    mse = mean_squared_error(y_true, y_pred)
+    mae = mean_absolute_error(y_true, y_pred)
+    pearson_corr, _ = pearsonr(y_true, y_pred)
+    spearman_corr, _ = spearmanr(y_true, y_pred)
+    return r2, mse, mae, pearson_corr, spearman_corr
 
+r2_train, mse_train, mae_train, pearson_train, spearman_train = metrics(y_true_train, y_pred_train)
+r2_test, mse_test, mae_test, pearson_test, spearman_test = metrics(y_true_test, y_pred_test)
 
-# # TRAIN 3
-# # Define train and test indices
-# train_indices = list(range(30, 37))      
-# test_indices = list(range(0, 30))            
+# Annotate metrics in the plot
+textstr = '\n'.join((
+    f"Train: R²={r2_train:.3g}, MSE={mse_train:.3g}, MAE={mae_train:.3g}, "
+    f"Pearson={pearson_train:.3g}, Spearman={spearman_train:.3g}",
+    f"Test:  R²={r2_test:.3g}, MSE={mse_test:.3g}, MAE={mae_test:.3g}, "
+    f"Pearson={pearson_test:.3g}, Spearman={spearman_test:.3g}"
+))
 
-# plt.figure(figsize=(14, 3), dpi=150)
-# plt.plot(y_true, '.-', label='Measurements', color='blue')
-
-# # Plot model predictions
-# plt.plot(y_predicted.iloc[train_indices], '.-', label='Model predictions (train)', color='orange')
-# plt.plot(y_predicted.iloc[test_indices], '.-', label='Model predictions (test)', color='red')
-
-# # Plot Std Dev Band for Train – Part 1
-# plt.fill_between(y_predicted.index[train_indices],
-#                  y_pred_lower[train_indices],
-#                  y_pred_upper[train_indices],
-#                  color='orange', alpha=0.2, zorder=1)
-
-# # Plot Std Dev Band for Test
-# plt.fill_between(y_predicted.index[test_indices],
-#                  y_pred_lower[test_indices],
-#                  y_pred_upper[test_indices],
-#                  color='red', alpha=0.2, zorder=1)
-
-# plt.xlabel("Time")
-# plt.ylabel("KLa")
-# plt.legend()
-# plt.show()
+plt.figtext(0.5, -0.05, textstr, ha='center', fontsize=10, bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.7))
+plt.tight_layout()
+plt.savefig('/home/loesv/all_results/pileaute/KLa/CNN_scatterplot.png',  bbox_inches='tight', dpi=250)
+plt.savefig('/home/loesv/all_results/pileaute/KLa/CNN_scatterplot.pdf',  bbox_inches='tight', dpi=250)
+plt.show()

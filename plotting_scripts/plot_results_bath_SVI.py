@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-output_path='output/pileaute/Qair'
+output_path='output/bath/SVI'
 
 all_labels = []
 all_preds = []
@@ -47,21 +47,25 @@ y_pred_lower = y_predicted - std_dev
 
 
 # Define train and test indices
-train_indices= list(range(0, 80))       
-test_indices = list(range(80, 111))            
+train_indices1 = list(range(0, 13))
+train_indices2= list(range(18, 23))  # 0–12 and 18–23
+train_indices=list(range(0, 13))+list(range(18, 23))
+test_indices = list(range(13, 18))  # 13–17
 
 #plot time series
 plt.rcParams.update({'font.size': 12})    
 plt.figure(figsize=(14, 3), dpi=200)
 plt.plot(y_true, '.-', label='Measurements', color='blue')
-plt.plot(y_predicted.iloc[train_indices], '.-', label='Model predictions (train)', color='orange')
+plt.plot(y_predicted.iloc[train_indices1], '.-', label='Model predictions (train)', color='orange')
+plt.plot(y_predicted.iloc[train_indices2], '.-', color='orange')
 plt.plot(y_predicted.iloc[test_indices], '.-', label='Model predictions (test)', color='red')
 plt.xlabel("Time")
-plt.ylabel("Qair (L/min)")
+plt.ylabel("SVI (mL/g)")
 plt.legend()
-plt.savefig('/home/loesv/all_results/pileaute/Qair/CNN.png',  bbox_inches='tight', dpi=250)
-plt.savefig('/home/loesv/all_results/pileaute/Qair/CNN.pdf',  bbox_inches='tight', dpi=250)
+plt.savefig('/home/loesv/all_results/bath/SVI/CNN.png',  bbox_inches='tight', dpi=250)
+plt.savefig('/home/loesv/all_results/bath/SVI/CNN.pdf',  bbox_inches='tight', dpi=250)
 plt.show()
+
 
 from sklearn.metrics import r2_score, root_mean_squared_error, mean_absolute_error
 
@@ -112,6 +116,6 @@ textstr = '\n'.join((
 
 plt.figtext(0.5, -0.05, textstr, ha='center', fontsize=10, bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.7))
 plt.tight_layout()
-plt.savefig('/home/loesv/all_results/pileaute/Qair/CNN_scatterplot.png',  bbox_inches='tight', dpi=250)
-plt.savefig('/home/loesv/all_results/pileaute/Qair/CNN_scatterplot.pdf',  bbox_inches='tight', dpi=250)
+plt.savefig('/home/loesv/all_results/bath/SVI/CNN_scatterplot.png',  bbox_inches='tight', dpi=250)
+plt.savefig('/home/loesv/all_results/bath/SVI/CNN_scatterplot.pdf',  bbox_inches='tight', dpi=250)
 plt.show()

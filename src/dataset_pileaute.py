@@ -1,11 +1,11 @@
-from utils.helpers import extract_image_paths_zurich
+from utils.helpers import extract_image_paths
 from torch.utils.data import Dataset
 import pandas as pd
 from PIL import Image as PImage
 import os
 
-class MicroscopicImagesZurich(Dataset):
-    def __init__(self, root, start_folder, end_folder, label_path, transform=None):
+class MicroscopicImagesPileaute(Dataset):
+    def __init__(self, root, start_folder, end_folder, magnification, label_path, transform=None):
         """
         Args:
             root (str): Path to the root directory containing images.
@@ -17,7 +17,7 @@ class MicroscopicImagesZurich(Dataset):
         self.root = root
         self.transform = transform
         self.label_path = label_path
-        self.image_paths = extract_image_paths_zurich(root, start_folder=start_folder, end_folder=end_folder)
+        self.image_paths = extract_image_paths(root, start_folder=start_folder, end_folder=end_folder, magnification=magnification)
         self.targets = []
         # Load CSV file containing image paths (or filenames) and labels
         self.labels_df = pd.read_csv(label_path, index_col=0)

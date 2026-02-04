@@ -5,7 +5,9 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-output_path='output/pileaute/Qair'
+##### watch out!! here in this script you still need to add mech model output to pred, also check this for other TSS res scripts
+
+output_path='output/pileaute/settling/TSS_all'
 
 all_labels = []
 all_preds = []
@@ -33,9 +35,13 @@ df_avg = df.groupby('date', as_index=False).agg(
     pred_std=('pred', 'std')
 )
 
-
 df_avg=df_avg.set_index('date')
 df_avg.index=pd.to_datetime(df_avg.index)
+
+
+df=pd.read_excel('data/pileaute/settler_data/filtered_data/filtered_TSS_data.xlsx', sheet_name='TSS_effluent', index_col=0)
+df.index=pd.to_datetime(df.index)
+
 
 # --- Prepare data for plotting ---
 y_true = df_avg['label_mean']
@@ -45,23 +51,27 @@ std_dev = df_avg['pred_std']
 y_pred_upper = y_predicted + std_dev
 y_pred_lower = y_predicted - std_dev
 
+# #### make plot
 
 # Define train and test indices
 train_indices= list(range(0, 80))       
-test_indices = list(range(80, 111))            
-
-#plot time series
+test_indices = list(range(80, 112))            
 plt.rcParams.update({'font.size': 12})    
+
 plt.figure(figsize=(14, 3), dpi=200)
 plt.plot(y_true, '.-', label='Measurements', color='blue')
 plt.plot(y_predicted.iloc[train_indices], '.-', label='Model predictions (train)', color='orange')
 plt.plot(y_predicted.iloc[test_indices], '.-', label='Model predictions (test)', color='red')
 plt.xlabel("Time")
-plt.ylabel("Qair (L/min)")
+plt.ylabel("TSS effluent (mg/L)")
 plt.legend()
-plt.savefig('/home/loesv/all_results/pileaute/Qair/CNN.png',  bbox_inches='tight', dpi=250)
-plt.savefig('/home/loesv/all_results/pileaute/Qair/CNN.pdf',  bbox_inches='tight', dpi=250)
+plt.yscale('log')
+#plt.savefig('/home/loesv/all_results/pileaute/TSS_all/CNN.png',  bbox_inches='tight', dpi=250)
+#plt.savefig('/home/loesv/all_results/pileaute/TSS_all/CNN.pdf',  bbox_inches='tight', dpi=250)
 plt.show()
+
+
+##################
 
 from sklearn.metrics import r2_score, root_mean_squared_error, mean_absolute_error
 
@@ -112,6 +122,6 @@ textstr = '\n'.join((
 
 plt.figtext(0.5, -0.05, textstr, ha='center', fontsize=10, bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.7))
 plt.tight_layout()
-plt.savefig('/home/loesv/all_results/pileaute/Qair/CNN_scatterplot.png',  bbox_inches='tight', dpi=250)
-plt.savefig('/home/loesv/all_results/pileaute/Qair/CNN_scatterplot.pdf',  bbox_inches='tight', dpi=250)
+#plt.savefig('/home/loesv/all_results/pileaute/TSS_all/CNN_scatterplot.png',  bbox_inches='tight', dpi=250)
+#plt.savefig('/home/loesv/all_results/pileaute/TSS_all/CNN_scatterplot.pdf',  bbox_inches='tight', dpi=250)
 plt.show()

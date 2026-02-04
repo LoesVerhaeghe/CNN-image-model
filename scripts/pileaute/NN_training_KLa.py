@@ -10,10 +10,10 @@ import argparse
 def parse_args():
     parser = argparse.ArgumentParser(description="Experimenter: compares models with different initialization")
     #data, paths, and other settings of general setup
-    parser.add_argument('--imagedatapath', type=str, default= 'data/settler_data/filtered_data/images_pileaute_settling_filtered', help='Path to load the image dataset')
-    parser.add_argument('--labelpath', type=str, default= 'data/settler_data/filtered_data/TSS_ras_error.csv', help='Path to load the labels')
-    parser.add_argument('--output_path', type=str, default= 'output/settling/output_edgedetection_TSSras_error_train1', help='Path for saving models and metrics')    
-    parser.add_argument('--gpu', type=str, default='0', help='GPU ID to use for training (see nvidia-smi)')
+    parser.add_argument('--imagedatapath', type=str, default= 'data/pileaute/beluchting/microscopic_images_pileaute_KLa', help='Path to load the image dataset')
+    parser.add_argument('--labelpath', type=str, default= 'data/pileaute/beluchting/KLa.csv', help='Path to load the labels')
+    parser.add_argument('--output_path', type=str, default= 'output/pileaute/KLa/KLa_filtered', help='Path for saving models and metrics')    
+    parser.add_argument('--gpu', type=str, default='3', help='GPU ID to use for training (see nvidia-smi)')
     parser.add_argument('--multigpu',  action='store_true', default=False, help='Either to use parallel GPU processing or not')
   
     parser.add_argument('--tl',  action='store_true', default=True, help='Transfer learning or not')
@@ -21,8 +21,8 @@ def parse_args():
     parser.add_argument('--seed', type=int, default=666, help='Base random seed for weight initialization and data splits/shuffle')
     parser.add_argument('--lr', type=float, default=5e-5, help='learning rate')   
     parser.add_argument('--epochs', type=int, default=30, help='Number of training epochs.')
-    parser.add_argument('--K', type=int, default=4, help='K-fold splits')
-    parser.add_argument('--target', type=str, default='TSSeff_error', help='Target to train on')
+    parser.add_argument('--K', type=int, default=10, help='K-fold splits')
+    parser.add_argument('--target', type=str, default='KLa', help='Target to train on')
 
     return parser.parse_args()
 
@@ -43,41 +43,12 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from torchvision import transforms
+from torchsummary import summary
 import timm
 import sklearn.model_selection
 ##################################################################
 from src import dataset_pileaute
 
-
-########## define canny edge detection preprocessing step
-
-import cv2
-import numpy as np
-import torch
-from torchvision.transforms import functional as TF
-
-
-class ToCanny:
-    def __init__(self, low_threshold=50, high_threshold=75):
-        self.low = low_threshold
-        self.high = high_threshold
-
-    def __call__(self, img_tensor):
-        # Convert to NumPy (C x H x W -> H x W)
-        img_np = img_tensor.numpy().transpose(1, 2, 0)
-        img_np = (img_np * 255).astype(np.uint8)
-        if img_np.shape[2] == 3:
-            img_gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-
-        # Apply Canny
-        edges = cv2.Canny(img_gray, self.low, self.high)
-
-        # Convert to tensor and add channel dim
-        edges = edges.astype(np.float32) / 255.0  # Normalize to [0,1]
-        edges = np.stack([edges] * 3, axis=0)
-
-        return torch.tensor(edges, dtype=torch.float)
-    
 if __name__ == "__main__":
     args = parse_args()
     torch.set_num_threads(8)
@@ -85,49 +56,48 @@ if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(device)
 
-    BATCH_SIZE = 32 
+    BATCH_SIZE = 32
     # ImageNet normalization parameters and other img transformations
     averages =  (0.485, 0.456, 0.406)
     variances = (0.229, 0.224, 0.225)  
     
-    imgdimm = (384, 512)
+    imgdimm = (512,384)
 
     # REGULARIZATION/DATA AUG.
         
     train_transform = transforms.Compose([
         transforms.ToTensor(),        
-        transforms.Resize(imgdimm),
-        # transforms.RandomResizedCrop(imgdimm, scale=(0.8, 1.2), ratio=(1.0, 1.0)),
+        #transforms.Resize(imgdimm),
+        transforms.RandomResizedCrop(imgdimm, scale=(0.9, 1.1), ratio=(1.0, 1.0)),
         
         # Additional transformations
         transforms.RandomApply(
             torch.nn.ModuleList([transforms.ColorJitter(
-                brightness=0.2, contrast=0, saturation=0, hue=0),
+                brightness=0.1, contrast=0.05, saturation=0, hue=0),
                 ]), p=0.5),        
         ######
-        ToCanny(),
         ###### geometric transformations
         transforms.RandomHorizontalFlip(p=0.5),
         transforms.RandomVerticalFlip(p=0.5),
         transforms.RandomApply(
-            torch.nn.ModuleList([transforms.RandomRotation(180),
+            torch.nn.ModuleList([transforms.RandomRotation(30),
                 ]), p=0.5),        
-        transforms.RandomErasing(p=0.5, scale=(0.02, 0.2)),
+        transforms.RandomErasing(p=0.3, scale=(0.02, 0.1)),
+        transforms.GaussianBlur(kernel_size=(3, 5), sigma=(0.1, 2.0)),
         transforms.Normalize(averages, variances),   
     ])
     
     val_transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Resize(imgdimm),
-        ToCanny(),
         transforms.Normalize(averages, variances),        
     ])
    
-    train_dataset = dataset_pileaute.MicroscopicImages(root=args.imagedatapath, magnification=10, start_folder='2023-10-13', end_folder='2024-07-24', label_path=args.labelpath, transform=train_transform) 
-    #train_dataset_2 = dataset.MicroscopicImages(root=args.imagedatapath, magnification=10, start_folder='2024-04-26', end_folder='2025-02-19', label_path=args.labelpath, transform=train_transform) 
+    train_dataset = dataset_pileaute.MicroscopicImagesPileaute(root=args.imagedatapath, magnification=10, start_folder='2023-10-17', end_folder='2024-10-03', label_path=args.labelpath, transform=train_transform) 
+    #train_dataset_2 = dataset_pileaute.MicroscopicImagesPileaute(root=args.imagedatapath, magnification=10, start_folder='2024-10-09', end_folder='2025-02-19', label_path=args.labelpath, transform=train_transform) 
  
-    val_dataset = dataset_pileaute.MicroscopicImages(root=args.imagedatapath, magnification=10, start_folder='2023-10-13', end_folder='2024-07-24', label_path=args.labelpath, transform=val_transform)   
-    #val_dataset_2 = dataset.MicroscopicImages(root=args.imagedatapath, magnification=10, start_folder='2024-04-26', end_folder='2025-02-19', label_path=args.labelpath, transform=val_transform)   
+    val_dataset = dataset_pileaute.MicroscopicImagesPileaute(root=args.imagedatapath, magnification=10, start_folder='2023-10-17', end_folder='2024-10-03', label_path=args.labelpath, transform=val_transform)   
+    #val_dataset_2 = dataset_pileaute.MicroscopicImagesPileaute(root=args.imagedatapath, magnification=10, start_folder='2024-10-09', end_folder='2025-02-19', label_path=args.labelpath, transform=val_transform)   
     
     #train_dataset.image_paths.extend(train_dataset_2.image_paths)
     #train_dataset.targets.extend(train_dataset_2.targets)
@@ -185,7 +155,7 @@ if __name__ == "__main__":
             #                                     for indd in train_index])
             
             trainloader = torch.utils.data.DataLoader(train, batch_size = BATCH_SIZE, shuffle = True,
-                                                      drop_last=False, pin_memory=True, num_workers=num_workers)
+                                                      drop_last=True, pin_memory=True, num_workers=num_workers)
             
             valloader = torch.utils.data.DataLoader(val, batch_size = 1, shuffle = False,
                                                      drop_last=False, num_workers=num_workers)
@@ -208,14 +178,14 @@ if __name__ == "__main__":
                     drop_path_rate=0.2
                     
                 layer_decay = 0.8
-                weight_decay=1e-8
+                weight_decay=1e-6
                 if 'resnet' in args.backbone:
                     model = timm.create_model(args.backbone, pretrained=True, 
                                               num_classes=n_classes,
                                               drop_path_rate=drop_path_rate)
                 elif 'convnext' in args.backbone:
                     model = timm.create_model(args.backbone, pretrained=True, 
-                                              num_classes=n_classes, head_init_scale=0.001,
+                                              num_classes=n_classes, head_init_scale=0.001, 
                                               drop_path_rate=drop_path_rate)
                 else:
                     model = timm.create_model(args.backbone, pretrained=True, 
@@ -241,11 +211,12 @@ if __name__ == "__main__":
                 else:
                     model = timm.create_model(args.backbone, pretrained=False, 
                                               num_classes=n_classes)
-   
-            # for param in model.parameters():
-            #     param.requires_grad = False 
-            # for param in model.fc.parameters():
-            #     param.requires_grad = True
+
+            # model = CombinedModel(backbone_model=model, new_head=new_head)   
+            # # for param in model.parameters():
+            # #     param.requires_grad = False 
+            # # for param in model.fc.parameters():
+            # #     param.requires_grad = True
                 
             num_layers=3
             layer_decay= list(layer_decay ** (num_layers + 1 - i) for i in range(num_layers + 2))
@@ -263,19 +234,22 @@ if __name__ == "__main__":
                                 {"params": model.stages[1].parameters(), "lr": args.lr*layer_decay[1]},
                                 {"params": model.stages[2].parameters(), "lr": args.lr*layer_decay[2]},
                                 {"params": model.stages[3].parameters(), "lr": args.lr*layer_decay[3]},
-                                {"params": model.head.parameters(), "lr": args.lr*layer_decay[4]},
+                                {"params": model.head.parameters(), "lr": args.lr*layer_decay[4] }
                                 ]
             else:
                 print("!!! Layer-wise learning rates not available for the given network")
                 layer_wise_lr=model.parameters()
-            
+
             optimizer = torch.optim.AdamW(layer_wise_lr,                                          
                                           lr=args.lr,  weight_decay=weight_decay) #standard lr=0.001
-            
+     
             # learning rate update scheduler
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,
-                                                                   T_max=args.epochs,
-                                                                   eta_min=0, last_epoch= -1)
+            # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,
+            #                                                        T_max=args.epochs,
+            #                                                        eta_min=0, last_epoch= -1)
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, mode='min', factor=0.75, patience=3, verbose=True
+            )
             scaler = torch.cuda.amp.GradScaler()
             
             if args.multigpu:
@@ -284,7 +258,9 @@ if __name__ == "__main__":
             
             best_model=copy.deepcopy(model)    
             model.to(device)
-            
+
+            summary(model, (3,512,384))
+
             for epoch in range(args.epochs):
                 torch.manual_seed(args.seed*(fold+1) + epoch)
                 np.random.seed(args.seed*(fold+1) + epoch)
@@ -342,7 +318,7 @@ if __name__ == "__main__":
                     #         #     ave_grads.append(0)
                     # batch_grads.append(ave_grads)
                 
-                scheduler.step()
+                # scheduler.step()
                 # gradients.append(np.mean(batch_grads, axis=0))
                 
                 tlosss = np.mean(running_loss)
@@ -365,6 +341,7 @@ if __name__ == "__main__":
                     
                 vlo = np.mean(vlo_bff)
                 vlo = vlo*TARGET_SCALE
+                scheduler.step(vlo)
                 # vlo = vlo * 1.4942304976316982 + 11.537147406898626 
                 #define here the convergence criterion. I considered accuracy on the paper
                 if len(val_losses) == 0 or vlo < min(val_losses): 
@@ -391,45 +368,59 @@ if __name__ == "__main__":
                 
             del model
             model = []        
-            full_dataset = dataset_pileaute.MicroscopicImages(root=args.imagedatapath, 
-                                                                 magnification=10, 
-                                                                 start_folder='2023-10-13',
-                                                                 end_folder='2025-02-19',
-                                                                 label_path=args.labelpath, 
-                                                                 transform=val_transform) # Use validation transform for testing
+            full_dataset = dataset_pileaute.MicroscopicImagesPileaute(root=args.imagedatapath, 
+                                                                      magnification=10,
+                                                                      start_folder='2023-10-17',
+                                                                        end_folder='2025-02-19',
+                                                                        label_path=args.labelpath, 
+                                                                        transform=val_transform) # Use validation transform for testing
             full_loader = DataLoader(full_dataset,
-                             batch_size=64,
+                             batch_size=32,
                              shuffle=False, # IMPORTANT: Ensure order is preserved
                              num_workers=1,
                              pin_memory=True)            
             predictions = []
             all_labels = []
             all_preds = []
+            all_img_features = []
+            all_dates = []
             best_model.eval()
-            for ii, data in enumerate(full_loader, 0):
-                if args.target == 'bulking':
-                    inputs, labels = data[0].to(device), data[1].to(torch.int64).to(device)
-                    
-                    predictions.append((labels.cpu().detach().numpy()[0],
-                                        best_model(inputs).cpu().detach().numpy()[0,0], best_model(inputs).cpu().detach().numpy()[0,1]))
-                    
-                else:
-                    inputs, labels = data[0].to(device), data[1].to(torch.float32).to(device)
-                    labels = labels.unsqueeze(1)
-                    preds = best_model(inputs).cpu().detach().numpy() * TARGET_SCALE
-                    all_labels.append(labels.cpu().detach().numpy())
-                    all_preds.append(preds)
-            
+            pool_layer=nn.AdaptiveAvgPool2d(1)
+            with torch.no_grad():
+                for ii, data in enumerate(full_loader, 0):
+                    if args.target == 'bulking':
+                        inputs, labels = data[0].to(device), data[1].to(torch.int64).to(device)
+                        
+                        predictions.append((labels.cpu().detach().numpy()[0],
+                                            best_model(inputs).cpu().detach().numpy()[0,0], best_model(inputs).cpu().detach().numpy()[0,1]))
+                        
+                    else:
+                        inputs, labels, dates = data[0].to(device), data[1].to(torch.float32).to(device), data[2]
+
+                        labels = labels.unsqueeze(1)
+
+                        preds = best_model(inputs)
+                        preds = preds.cpu().detach().numpy() * TARGET_SCALE
+
+                        features=best_model.forward_features(inputs)
+                        pooled_features=pool_layer(features)
+                        pooled_features=pooled_features.view(pooled_features.size(0), -1)
+                        all_img_features.append(pooled_features.cpu().detach().numpy())
+                        all_labels.append(labels.cpu().detach().numpy())
+                        all_preds.append(preds)
+                        all_dates.append(dates)
+                
             all_labels = np.concatenate(all_labels)
             all_preds = np.concatenate(all_preds)
-               
+            all_dates = np.concatenate(all_dates)
+            all_img_features = np.concatenate(all_img_features)
+                
             with open(file, 'wb') as f:
                 pickle.dump([train_accs, train_losses, val_accs, val_losses, 
-                              converged_on, all_labels, all_preds], f)
+                              converged_on, all_labels, all_preds, all_img_features, all_dates], f)
                 
             torch.save(best_model.state_dict(), file + '_NETWORK.pt')
 
-            
             del best_model
             best_model= []
                     
